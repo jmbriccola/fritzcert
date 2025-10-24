@@ -74,6 +74,8 @@ build:
 
 update:
 	@echo "[INFO] Updating..."
+	@echo "[INFO] Pulling updates from github..."
+	@git pull
 	@PIPX_CMD="$$(command -v $(PIPX) 2>/dev/null || echo $(PIPX_BIN))"; \
 	if [ -x "$$PIPX_CMD" ]; then \
 		"$$PIPX_CMD" reinstall $(PKG_NAME) . || "$$PIPX_CMD" install --force .; \
