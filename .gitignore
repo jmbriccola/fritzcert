@@ -1,3 +1,6 @@
 dist
 build
 src/fritzcert_cli.egg-info
+src/fritzcert_cli/__pycache__
+fritzcert-logs/
+.vscode

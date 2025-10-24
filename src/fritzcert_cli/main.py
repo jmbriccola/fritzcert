@@ -7,19 +7,56 @@ import argparse
 import sys
 import pathlib
 import os
+import tempfile
+import shutil
 
 from fritzcert_cli import config, acme, fritzbox
 
-LOG_DIR = pathlib.Path("/var/log/fritzcert")
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-LOG_FILE = LOG_DIR / "fritzcert.log"
+
+def _resolve_log_file() -> pathlib.Path:
+    """
+    Decide on a writable log location.
+    Prefer system path when available, otherwise fall back to the user's state dir.
+    """
+    candidates = [pathlib.Path("/var/log/fritzcert")]
+
+    try:
+        home_dir = pathlib.Path.home()
+    except RuntimeError:
+        home_dir = None
+
+    if home_dir:
+        candidates.append(home_dir / ".local/state/fritzcert")
+    for directory in candidates:
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            return directory / "fritzcert.log"
+        except (OSError, PermissionError):
+            continue
+    fallback_dirs = [
+        pathlib.Path.cwd() / "fritzcert-logs",
+        pathlib.Path(tempfile.gettempdir()) / "fritzcert",
+    ]
+    for directory in fallback_dirs:
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            return directory / "fritzcert.log"
+        except (OSError, PermissionError):
+            continue
+    raise RuntimeError("Unable to determine writable log directory")
 
 
-def log(msg: str):
+LOG_FILE = _resolve_log_file()
+
+
+def log(msg: str) -> None:
     line = f"[{os.getpid()}] {msg}"
     print(line)
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(line + "\n")
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except OSError:
+        pass
 
 
 def cmd_init(args):
@@ -153,6 +190,7 @@ def cmd_install_systemd(args):
     user = os.environ.get("SUDO_USER") or os.environ.get("USER", "root")
     svc = "/etc/systemd/system/fritzcert.service"
     tim = "/etc/systemd/system/fritzcert.timer"
+    fritzcert_exec = shutil.which("fritzcert") or "/usr/local/bin/fritzcert"
     svc_body = f"""[Unit]
 Description=Renew Let's Encrypt and deploy to Fritz!Box (fritzcert)
 Wants=network-online.target
@@ -161,8 +199,8 @@ After=network-online.target
 [Service]
 Type=oneshot
 User={user}
-ExecStart=/usr/bin/fritzcert renew
-ExecStartPost=/usr/bin/fritzcert deploy
+ExecStart={fritzcert_exec} renew
+ExecStartPost={fritzcert_exec} deploy
 """
     tim_body = """[Unit]
 Description=Daily fritzcert renew + deploy
