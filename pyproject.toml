@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fritzcert-cli"
+version = "0.1.0"
+description = "Gestione automatica dei certificati Let's Encrypt per più Fritz!Box (multi-DNS provider)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Jacopo Maria Briccola", email = "jmbriccola@gmail.com" }]
+dependencies = ["PyYAML>=6.0"]
+
+[project.urls]
+Homepage = "https://github.com/jmbriccola/fritzcert"
+Issues = "https://github.com/jmbriccola/fritzcert/issues"
+
+[project.scripts]
+fritzcert = "fritzcert_cli.main:main"
+
+[tool.setuptools]
+license-files = ["LICENSE", "LICENSE.*", "COPYING*", "NOTICE*"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
