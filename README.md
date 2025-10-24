@@ -19,14 +19,14 @@ _A command-line tool for issuing, deploying, and renewing SSL/TLS certificates v
 
 ## Features
 
-- **Multi-CA** — Works with Let's Encrypt (default) or ZeroSSL.  
-- **Multi-DNS Provider** — Compatible with any DNS-01 plugin supported by `acme.sh` (GoDaddy, Cloudflare, IONOS, AWS, etc.).  
-- **Multi-Box Management** — Supports multiple FRITZ!Box routers, each with its own domain, DNS provider, and credentials.  
-- **Automatic Renewal** — Daily certificate renewal and re-deployment via `systemd` timer or the built-in `acme.sh` cron.  
-- **Secure Upload** — Certificates are uploaded to the FRITZ!Box using HTTPS and SID-based challenge authentication.  
-- **Full Logging** — Unified logs under `/var/log/fritzcert/fritzcert.log` and visible through `journalctl`.  
-- **Flexible Installation** — Works with `pipx` or standalone virtual environments under `/opt`.  
-- **Readable Configuration** — YAML-based configuration stored in `/etc/fritzcert/config.yaml` with automatic backups.
+- **Multi-CA** - Works with Let's Encrypt (default) or ZeroSSL.  
+- **Multi-DNS Provider** - Compatible with any DNS-01 plugin supported by `acme.sh` (GoDaddy, Cloudflare, IONOS, AWS, etc.).  
+- **Multi-Box Management** - Supports multiple FRITZ!Box routers, each with its own domain, DNS provider, and credentials.  
+- **Automatic Renewal** - Daily certificate renewal and re-deployment via `systemd` timer or the built-in `acme.sh` cron.  
+- **Secure Upload** - Certificates are uploaded to the FRITZ!Box using HTTPS and SID-based challenge authentication.  
+- **Full Logging** - Unified logs under `/var/log/fritzcert/fritzcert.log` and visible through `journalctl`.  
+- **Flexible Installation** - Works with `pipx` or standalone virtual environments under `/opt`.  
+- **Readable Configuration** - YAML-based configuration stored in `/etc/fritzcert/config.yaml` with automatic backups.
 
 ---
 
@@ -196,6 +196,66 @@ Notes:
 - Credential keys must match the variable names expected by the chosen `acme.sh` plugin (e.g., `GD_Key`, `GD_Secret`, `CF_Token`, `IONOS_API_KEY`, etc.).
 - Supported key types: `2048`, `3072`, `4096`, `ec-256`, `ec-384`.
 
+### DNS Provider Configuration
+
+Each FRITZ!Box entry in `/etc/fritzcert/config.yaml` specifies a `dns_provider`.  
+The `plugin` name corresponds directly to the **acme.sh DNS plugin**, and the `credentials`
+section must define the environment variables required by that plugin.
+
+Below are examples for the most commonly used DNS providers supported by acme.sh:
+
+| Provider | Plugin name (`dns_plugin`) | Required credentials |
+|-----------|----------------------------|----------------------|
+| **GoDaddy** | `dns_gd` | `GD_Key` and `GD_Secret` |
+| **Cloudflare (API Token)** | `dns_cf` | `CF_Token` |
+| **Cloudflare (Global API Key)** | `dns_cf` | `CF_Key` and `CF_Email` |
+| **IONOS (1&1)** | `dns_ionos` | `IONOS_API_KEY` and `IONOS_API_SECRET` |
+| **AWS Route53** | `dns_aws` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` *(optional)* |
+| **Google Cloud DNS** | `dns_gcloud` | `GOOGLE_APPLICATION_CREDENTIALS` (path to a JSON key file) |
+| **DigitalOcean** | `dns_dgon` | `DO_API_KEY` |
+| **Namecheap** | `dns_namecheap` | `NAMECHEAP_USERNAME` and `NAMECHEAP_API_KEY` |
+| **OVH** | `dns_ovh` | `OVH_AK`, `OVH_AS`, `OVH_CK` |
+| **Hetzner DNS** | `dns_hetzner` | `HETZNER_Token` |
+| **Azure DNS** | `dns_azure` | `AZUREDNS_SUBSCRIPTIONID`, `AZUREDNS_TENANTID`, `AZUREDNS_APPID`, `AZUREDNS_CLIENTSECRET` |
+| **DuckDNS** | `dns_duckdns` | `DuckDNS_Token` |
+| **PowerDNS** | `dns_pdns` | `PDNS_Url`, `PDNS_ServerId`, `PDNS_Token` |
+| **TransIP** | `dns_transip` | `TRANSIP_Username`, `TRANSIP_AccessToken` |
+| **Dynu** | `dns_dynu` | `Dynu_ClientId`, `Dynu_Secret` |
+
+> 💡 **Tip:** you can see all supported providers and their variables by running:  
+> ```bash
+> sudo /root/.acme.sh/acme.sh --list-dns
+> ```
+
+#### Example: Cloudflare API Token
+```yaml
+dns_provider:
+  plugin: dns_cf
+  credentials:
+    CF_Token: "your_cloudflare_token"
+```
+
+#### Example: GoDaddy
+```yaml
+dns_provider:
+  plugin: dns_gd
+  credentials:
+    GD_Key: "your_godaddy_key"
+    GD_Secret: "your_godaddy_secret"
+```
+
+#### Example: AWS Route53
+```yaml
+dns_provider:
+  plugin: dns_aws
+  credentials:
+    AWS_ACCESS_KEY_ID: "your_access_key"
+    AWS_SECRET_ACCESS_KEY: "your_secret_key"
+    AWS_REGION: "eu-central-1"
+```
+
+You can mix providers freely - each FRITZ!Box can use a different plugin and credentials.
+
 ### Initialize configuration
 
 ```bash
@@ -268,7 +328,7 @@ Displays certificate paths and expiry.
 
 ## Automatic Renewal & Deployment
 
-### Option 1 — Systemd (recommended)
+### Option 1 - Systemd (recommended)
 
 Install the service and timer:
 
@@ -291,7 +351,7 @@ systemctl list-timers | grep fritzcert
 journalctl -u fritzcert.service -n 50 --no-pager
 ```
 
-### Option 2 — Cron (if systemd is unavailable)
+### Option 2 - Cron (if systemd is unavailable)
 
 Edit root crontab:
 

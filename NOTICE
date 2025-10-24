@@ -25,15 +25,15 @@ Third-Party Components
 ----------------------
 This project uses and interacts with the following open-source software:
 
-1. **acme.sh** — https://github.com/acmesh-official/acme.sh  
+1. **acme.sh** - https://github.com/acmesh-official/acme.sh  
    License: GPLv3  
    Used for certificate issuance and renewal through the ACME protocol.
 
-2. **PyYAML** — https://pyyaml.org/  
+2. **PyYAML** - https://pyyaml.org/  
    License: MIT  
    Used for parsing and writing YAML configuration files.
 
-3. **Python Standard Library** — https://docs.python.org/3/license.html  
+3. **Python Standard Library** - https://docs.python.org/3/license.html  
    License: Python Software Foundation License
 
 Disclaimer
