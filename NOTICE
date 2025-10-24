@@ -1,0 +1,52 @@
+NOTICE
+======
+
+Project: fritzcert-cli  
+Version: 0.1.0  
+Author: Jacopo Maria Briccola  
+Copyright © 2025  
+License: MIT
+
+Description
+-----------
+fritzcert-cli is an open-source command-line tool for managing SSL/TLS certificates
+on AVM FRITZ!Box routers. It automates issuance, deployment, and renewal of HTTPS
+certificates using acme.sh and the Let's Encrypt or ZeroSSL Certificate Authorities.
+
+Key Features
+------------
+- Automated certificate lifecycle management for multiple FRITZ!Box devices
+- Integration with acme.sh for DNS-01 validation
+- Multi-provider support (GoDaddy, Cloudflare, IONOS, AWS Route53, and others)
+- Secure certificate upload via FRITZ!Box HTTPS interface
+- Automatic renew and deployment via systemd or cron
+
+Third-Party Components
+----------------------
+This project uses and interacts with the following open-source software:
+
+1. **acme.sh** — https://github.com/acmesh-official/acme.sh  
+   License: GPLv3  
+   Used for certificate issuance and renewal through the ACME protocol.
+
+2. **PyYAML** — https://pyyaml.org/  
+   License: MIT  
+   Used for parsing and writing YAML configuration files.
+
+3. **Python Standard Library** — https://docs.python.org/3/license.html  
+   License: Python Software Foundation License
+
+Disclaimer
+----------
+This software is not affiliated with, endorsed by, or supported by AVM GmbH,
+the manufacturer of FRITZ!Box devices.  
+Use at your own risk.
+
+Contributors
+------------
+- Jacopo Maria Briccola (Primary Developer & Maintainer)
+
+Contact
+-------
+GitHub Issues: https://github.com/jmbriccola/fritzcert/issues  
+Email: jmbriccola@gmail.com
