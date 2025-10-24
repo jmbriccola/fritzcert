@@ -126,7 +126,7 @@ def issue_certificate(
     ensure_account()
 
     # 2) compute output paths
-    state = box_state_dir(box_name)
+    state = _box_paths(box_name)
     key_path = state / "fritzbox.key"
     pem_path = state / "fritzbox.pem"
 
