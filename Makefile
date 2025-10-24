@@ -63,6 +63,20 @@ install: dirs
 			sudo ln -sf $(HOME)/.local/bin/fritzcert /usr/local/bin/fritzcert; \
 		fi; \
 		$(MAKE) install-systemd; \
+		if ! sudo fritzcert install-completion --shell bash >/dev/null 2>&1; then \
+			echo "[WARN] Could not install bash completion automatically."; \
+		fi; \
+		if command -v zsh >/dev/null 2>&1; then \
+			sudo fritzcert install-completion --shell zsh >/dev/null 2>&1 || echo "[WARN] Could not install zsh completion automatically."; \
+		fi; \
+		if [ -n "$$SUDO_USER" ]; then \
+			if ! sudo -u "$$SUDO_USER" fritzcert install-completion --shell bash >/dev/null 2>&1; then \
+				echo "[WARN] Could not configure bash completion for $$SUDO_USER automatically."; \
+			fi; \
+			if command -v zsh >/dev/null 2>&1; then \
+				sudo -u "$$SUDO_USER" fritzcert install-completion --shell zsh >/dev/null 2>&1 || echo "[WARN] Could not configure zsh completion for $$SUDO_USER automatically."; \
+			fi; \
+		fi; \
 		echo "[OK] Installation completed via pipx. If 'fritzcert' is not in PATH, run: $$PIPX_CMD ensurepath and reopen the shell."; \
 	fi
 
@@ -103,6 +117,20 @@ install-venv: dirs
 	  /opt/$(PKG_NAME)-venv/bin/pip install --upgrade pip; \
 	  /opt/$(PKG_NAME)-venv/bin/pip install --upgrade .; \
 	  ln -sf /opt/$(PKG_NAME)-venv/bin/fritzcert /usr/local/bin/fritzcert; \
+	  if ! fritzcert install-completion --shell bash >/dev/null 2>&1; then \
+	    echo "[WARN] Could not install bash completion automatically."; \
+	  fi; \
+	  if command -v zsh >/dev/null 2>&1; then \
+	    fritzcert install-completion --shell zsh >/dev/null 2>&1 || echo "[WARN] Could not install zsh completion automatically."; \
+	  fi; \
+	  if [ -n "$$SUDO_USER" ]; then \
+	    if ! sudo -u "$$SUDO_USER" fritzcert install-completion --shell bash >/dev/null 2>&1; then \
+	      echo "[WARN] Could not configure bash completion for $$SUDO_USER automatically."; \
+	    fi; \
+	    if command -v zsh >/dev/null 2>&1; then \
+	      sudo -u "$$SUDO_USER" fritzcert install-completion --shell zsh >/dev/null 2>&1 || echo "[WARN] Could not configure zsh completion for $$SUDO_USER automatically."; \
+	    fi; \
+	  fi; \
 	'
 	@echo "[OK] venv installation completed."
 

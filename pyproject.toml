@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Jacopo Maria Briccola", email = "jmbriccola@gmail.com" }]
-dependencies = ["PyYAML>=6.0"]
+dependencies = ["PyYAML>=6.0", "argcomplete>=2.0"]
 
 [tool.setuptools]
 license-files = ["LICENSE", "LICENSE.*", "COPYING*", "NOTICE*"]

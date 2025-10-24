@@ -9,6 +9,7 @@ import pathlib
 import os
 import tempfile
 import shutil
+import subprocess
 
 from fritzcert_cli import config, acme, fritzbox
 
@@ -57,6 +58,93 @@ def log(msg: str) -> None:
             fh.write(line + "\n")
     except OSError:
         pass
+
+
+def _configure_completion(parser: argparse.ArgumentParser, subparsers: argparse._SubParsersAction) -> None:
+    """Enable argcomplete autocomplete with subcommand suggestions."""
+    try:
+        import argcomplete  # type: ignore
+        from argcomplete.completers import ChoicesCompleter  # type: ignore
+    except ImportError:
+        return
+
+    subparsers.completer = ChoicesCompleter(list(subparsers.choices.keys()))
+    argcomplete.autocomplete(parser)
+
+
+def _box_name_completer(prefix: str, parsed_args, **_unused):
+    """Return matching box names for completion."""
+    try:
+        boxes = config.list_boxes()
+    except Exception:
+        return []
+    names = [b.get("name", "") for b in boxes if isinstance(b, dict)]
+    return [name for name in names if isinstance(name, str) and name.startswith(prefix)]
+
+
+def _default_completion_path(shell: str) -> pathlib.Path:
+    """Return default install path for completion scripts based on shell."""
+    if shell == "bash":
+        if os.geteuid() == 0:
+            return pathlib.Path("/etc/bash_completion.d/fritzcert")
+        return pathlib.Path.home() / ".local/share/bash-completion/completions/fritzcert"
+    if shell == "zsh":
+        if os.geteuid() == 0:
+            return pathlib.Path("/usr/local/share/zsh/site-functions/_fritzcert")
+        return pathlib.Path.home() / ".local/share/zsh/site-functions/_fritzcert"
+    raise ValueError(f"Unsupported shell: {shell}")
+
+
+def _generate_completion_script(shell: str) -> str:
+    """Generate completion script content via argcomplete."""
+    cmd = [
+        sys.executable,
+        "-m",
+        "argcomplete.scripts.register_python_argcomplete",
+        "--shell",
+        shell,
+        "fritzcert",
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    except FileNotFoundError as exc:
+        raise RuntimeError("argcomplete is not available in the current environment.") from exc
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        raise RuntimeError(f"Failed to generate completion script: {stderr}") from exc
+    return proc.stdout
+
+
+def _ensure_profile_hook(shell: str, dest_path: pathlib.Path) -> None:
+    """Ensure the user's shell profile sources the completion script."""
+    marker = f"# >>> fritzcert {shell} completion >>>"
+    end_marker = f"# <<< fritzcert {shell} completion <<<"
+    snippet = f"""{marker}
+if [ -f "{dest_path}" ]; then
+    source "{dest_path}"
+fi
+{end_marker}
+"""
+    if shell == "bash":
+        profile = pathlib.Path.home() / ".bashrc"
+    elif shell == "zsh":
+        profile = pathlib.Path.home() / ".zshrc"
+    else:
+        return
+
+    try:
+        existing = profile.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        existing = ""
+
+    if marker in existing:
+        return
+
+    profile.parent.mkdir(parents=True, exist_ok=True)
+    with open(profile, "a", encoding="utf-8") as fh:
+        if existing and not existing.endswith("\n"):
+            fh.write("\n")
+        fh.write(snippet)
 
 
 def cmd_init(args):
@@ -220,6 +308,38 @@ WantedBy=timers.target
     print("Systemd timer installed: fritzcert.timer")
 
 
+def cmd_install_completion(args):
+    """Install shell completion script for fritzcert."""
+    shell = args.shell
+    try:
+        script = _generate_completion_script(shell)
+    except RuntimeError as exc:
+        print(f"Unable to generate completion script: {exc}")
+        sys.exit(1)
+
+    dest_path = pathlib.Path(args.dest) if args.dest else _default_completion_path(shell)
+    try:
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        dest_path.write_text(script, encoding="utf-8")
+        try:
+            os.chmod(dest_path, 0o644)
+        except PermissionError:
+            pass
+        if os.geteuid() != 0:
+            try:
+                _ensure_profile_hook(shell, dest_path)
+            except OSError as exc:
+                log(f"Unable to update profile for {shell} completion: {exc}")
+        log(f"Installed {shell} completion at {dest_path}")
+        print(f"{shell} completion installed at {dest_path}")
+    except PermissionError:
+        print(f"Permission denied writing completion script to {dest_path}. Try running with sudo.")
+        sys.exit(1)
+    except OSError as exc:
+        print(f"Failed to write completion script: {exc}")
+        sys.exit(1)
+
+
 def cmd_register_account(args):
     """Update the account section in config and register with the selected CA."""
     try:
@@ -265,17 +385,25 @@ def main():
     add.add_argument("--key-type", default="2048", help="Key type (2048, ec-256, etc.)")
 
     rem = sub.add_parser("remove-box", help="Remove a Fritz!Box entry")
-    rem.add_argument("--name", required=True)
+    rem_name = rem.add_argument("--name", required=True)
+    rem_name.completer = _box_name_completer
 
     iss = sub.add_parser("issue", help="Issue or renew certificates")
-    iss.add_argument("--name", help="Limit to a specific Fritz!Box")
+    iss_name = iss.add_argument("--name", help="Limit to a specific Fritz!Box")
+    iss_name.completer = _box_name_completer
 
     dep = sub.add_parser("deploy", help="Deploy certificate to Fritz!Box")
-    dep.add_argument("--name", help="Limit to a specific Fritz!Box")
+    dep_name = dep.add_argument("--name", help="Limit to a specific Fritz!Box")
+    dep_name.completer = _box_name_completer
 
     sub.add_parser("renew", help="Run renewal for all certificates")
     sub.add_parser("status", help="Show certificate status")
     sub.add_parser("install-systemd", help="Install the daily systemd timer")
+    comp = sub.add_parser("install-completion", help="Install shell completion script")
+    comp.add_argument("--shell", default="bash", choices=["bash", "zsh"], help="Target shell (default: bash)")
+    comp.add_argument("--dest", help="Custom destination path for the completion file")
+
+    _configure_completion(p, sub)
 
     args = p.parse_args()
 
@@ -290,6 +418,7 @@ def main():
         "renew": cmd_renew,
         "status": cmd_status,
         "install-systemd": cmd_install_systemd,
+        "install-completion": cmd_install_completion,
     }
     fn = cmd_map.get(args.cmd)
     if fn:

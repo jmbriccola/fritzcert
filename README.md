@@ -157,10 +157,29 @@ fritzcert --help
 Expected output:
 
 ```
-usage: fritzcert [-h] {init,list,add-box,remove-box,issue,deploy,renew,status,install-systemd} ...
+usage: fritzcert [-h] {init,list,add-box,remove-box,issue,deploy,renew,status,install-systemd,install-completion} ...
 ```
 
 If you see this output, the installation is complete.
+
+### Shell Completion
+
+Automatic command completion is available through [`argcomplete`](https://kislyuk.github.io/argcomplete/), which is installed alongside `fritzcert-cli`.
+
+- `make install` automatically installs Bash completions (and Zsh when available) via `fritzcert install-completion`. When run as a regular user, the command also appends a small snippet to your `~/.bashrc` or `~/.zshrc` so completions load on the next shell start.
+- To install manually or to target a different location/shell, run:
+
+  ```bash
+  fritzcert install-completion --shell bash
+  ```
+
+  Use `--shell zsh` for Zsh or `--dest <path>` to override the destination file.
+
+Completions will also suggest any Fritz!Box names already present in your configuration when using `--name` flags, and you can still opt for on-demand activation with:
+
+```bash
+eval "$(register-python-argcomplete fritzcert)"
+```
 
 ---
 
