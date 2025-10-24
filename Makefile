@@ -1,5 +1,5 @@
 # ==========================================================
-# Makefile per fritzcert-cli (install auto con pipx o fallback venv)
+# Makefile for fritzcert-cli (auto install via pipx or fallback venv)
 # ==========================================================
 
 PYTHON       ?= python3
@@ -17,75 +17,75 @@ PIPX_BIN     := $(HOME)/.local/bin/pipx
 
 help:
 	@echo ""
-	@echo "Comandi disponibili:"
-	@echo "  make install        -> installa la CLI con pipx (auto-installa pipx se manca)"
-	@echo "  make uninstall      -> disinstalla la CLI da pipx (o rimuove venv)"
-	@echo "  make build          -> crea il wheel (.whl)"
-	@echo "  make update         -> reinstalla/aggiorna via pipx"
-	@echo "  make dirs           -> crea dir di sistema (/etc, /var/lib, /var/log)"
-	@echo "  make install-venv   -> alternativa: venv in /opt + symlink in /usr/local/bin"
-	@echo "  make clean          -> pulizia build/cache"
+	@echo "Available commands:"
+	@echo "  make install        -> install CLI with pipx (auto-installs pipx if missing)"
+	@echo "  make uninstall      -> uninstall the CLI from pipx (or remove venv)"
+	@echo "  make build          -> build the wheel (.whl)"
+	@echo "  make update         -> reinstall/upgrade via pipx"
+	@echo "  make dirs           -> create system dirs (/etc, /var/lib, /var/log)"
+	@echo "  make install-venv   -> alternative: venv in /opt + symlink in /usr/local/bin"
+	@echo "  make clean          -> clean build/cache"
 	@echo ""
 
 dirs:
 	@sudo mkdir -p $(CONF_DIR) $(CONF_DIR)/backups $(STATE_DIR) $(LOG_DIR)
 	@sudo chmod 755 $(CONF_DIR) $(CONF_DIR)/backups $(STATE_DIR) $(LOG_DIR)
-	@echo "✅ Directory di sistema pronte."
+	@echo "[OK] System directories are ready."
 
 install: dirs
 	@set -e; \
-	echo "▶ Verifica pipx..."; \
+	echo "[INFO] Checking pipx..."; \
 	if ! command -v $(PIPX) >/dev/null 2>&1 && [ ! -x "$(PIPX_BIN)" ]; then \
-		echo "▶ Installo pipx (richiede sudo)..."; \
+		echo "[INFO] Installing pipx (requires sudo)..."; \
 		sudo apt update && sudo apt install -y pipx python3-venv; \
 	fi; \
-	echo "▶ Build wheel (isolato) ..."; \
+	echo "[INFO] Building wheel (isolated) ..."; \
 	$(PIPX) run build --wheel; \
 	WHEEL=$$(ls -1 $(BUILD_DIR)/*.whl | tail -n1); \
-	if [ -z "$$WHEEL" ]; then echo "❌ Nessuna wheel trovata in $(BUILD_DIR)"; exit 1; fi; \
+	if [ -z "$$WHEEL" ]; then echo "[ERROR] No wheel found in $(BUILD_DIR)"; exit 1; fi; \
 	PIPX_CMD="$$(command -v $(PIPX) 2>/dev/null || echo $(PIPX_BIN))"; \
 	if [ ! -x "$$PIPX_CMD" ]; then \
-		echo "⚠️  pipx non disponibile, fallback venv in /opt..."; \
+		echo "[WARN] pipx not available, falling back to venv in /opt..."; \
 		$(MAKE) install-venv; \
 	else \
-		echo "▶ Installazione tramite pipx della wheel $$WHEEL ..."; \
+		echo "[INFO] Installing wheel via pipx: $$WHEEL ..."; \
 		"$$PIPX_CMD" install --force "$$WHEEL"; \
 		if [ -x "$(HOME)/.local/bin/fritzcert" ]; then \
-			echo "▶ Creo symlink globale in /usr/local/bin ..."; \
+			echo "[INFO] Creating global symlink in /usr/local/bin ..."; \
 			sudo ln -sf $(HOME)/.local/bin/fritzcert /usr/local/bin/fritzcert; \
 		fi; \
-		echo "✅ Installazione completata via pipx. Se 'fritzcert' non è nel PATH, esegui: $$PIPX_CMD ensurepath e riapri la shell."; \
+		echo "[OK] Installation completed via pipx. If 'fritzcert' is not in PATH, run: $$PIPX_CMD ensurepath and reopen the shell."; \
 	fi
 
 uninstall:
-	@echo "▶ Disinstallazione..."
+	@echo "[INFO] Uninstalling..."
 	@if command -v $(PIPX) >/dev/null 2>&1 || [ -x "$(PIPX_BIN)" ]; then \
 		PIPX_CMD="$$(command -v $(PIPX) 2>/dev/null || echo $(PIPX_BIN))"; \
 		"$$PIPX_CMD" uninstall $(PKG_NAME) || true; \
 	fi
-	@# rimuovi eventuale venv in /opt usato dal fallback
+	@# remove optional fallback venv in /opt
 	@sudo rm -rf /opt/$(PKG_NAME)-venv /usr/local/bin/fritzcert || true
-	@echo "✅ Disinstallato."
+	@echo "[OK] Uninstalled."
 
 build:
-	@echo "▶ Build wheel (isolato) ..."
+	@echo "[INFO] Building wheel (isolated) ..."
 	@$(PIPX) run build --wheel
 	@ls -lh $(BUILD_DIR)
 
 update:
-	@echo "▶ Aggiornamento..."
+	@echo "[INFO] Updating..."
 	@PIPX_CMD="$$(command -v $(PIPX) 2>/dev/null || echo $(PIPX_BIN))"; \
 	if [ -x "$$PIPX_CMD" ]; then \
 		"$$PIPX_CMD" reinstall $(PKG_NAME) . || "$$PIPX_CMD" install --force .; \
-		echo "✅ Aggiornamento completato (pipx)."; \
+		echo "[OK] Update completed (pipx)."; \
 	else \
-		echo "⚠️  pipx non disponibile, aggiorno venv in /opt..."; \
+		echo "[WARN] pipx not available, updating venv in /opt..."; \
 		$(MAKE) install-venv; \
 	fi
 
-# Alternativa senza pipx: venv di sistema in /opt + symlink CLI
+# Alternative without pipx: system venv in /opt + CLI symlink
 install-venv: dirs
-	@echo "▶ Installazione in venv /opt/$(PKG_NAME)-venv ..."
+	@echo "[INFO] Installing in venv /opt/$(PKG_NAME)-venv ..."
 	@sudo /bin/bash -lc '\
 	  set -e; \
 	  apt-get update && apt-get install -y python3-venv >/dev/null; \
@@ -94,11 +94,11 @@ install-venv: dirs
 	  /opt/$(PKG_NAME)-venv/bin/pip install --upgrade .; \
 	  ln -sf /opt/$(PKG_NAME)-venv/bin/fritzcert /usr/local/bin/fritzcert; \
 	'
-	@echo "✅ Installazione in venv completata."
+	@echo "[OK] venv installation completed."
 
 clean:
 	rm -rf $(BUILD_DIR) build *.egg-info __pycache__ */__pycache__
-	@echo "🧹 Pulizia completata."
+	@echo "[OK] Clean completed."
 
 SYSTEMD_DIR   = /etc/systemd/system
 SERVICE_FILE  = $(SYSTEMD_DIR)/fritzcert.service
@@ -107,18 +107,18 @@ TIMER_FILE    = $(SYSTEMD_DIR)/fritzcert.timer
 .PHONY: install-systemd uninstall-systemd
 
 install-systemd:
-	@echo "▶ Installo unità systemd..."
+	@echo "[INFO] Installing systemd units..."
 	@echo "[Unit]\nDescription=Renew Let's Encrypt and deploy to FRITZ!Box (fritzcert)\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=oneshot\nUser=root\nExecStart=/usr/local/bin/fritzcert renew\nExecStartPost=/usr/local/bin/fritzcert deploy\n" | sudo tee $(SERVICE_FILE) >/dev/null
 	@echo "[Unit]\nDescription=Daily fritzcert renew + deploy\n\n[Timer]\nOnCalendar=daily\nRandomizedDelaySec=1800\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n" | sudo tee $(TIMER_FILE) >/dev/null
 	@sudo systemctl daemon-reload
 	@sudo systemctl enable --now fritzcert.timer
-	@echo "✅ Systemd timer attivo: fritzcert.timer"
-	@echo "   Controllo: systemctl list-timers | grep fritzcert"
-	@echo "   Log:       journalctl -u fritzcert.service -n 200 --no-pager"
+	@echo "[OK] Systemd timer active: fritzcert.timer"
+	@echo "    Check:   systemctl list-timers | grep fritzcert"
+	@echo "    Logs:    journalctl -u fritzcert.service -n 200 --no-pager"
 
 uninstall-systemd:
-	@echo "▶ Rimuovo unità systemd..."
+	@echo "[INFO] Removing systemd units..."
 	@sudo systemctl disable --now fritzcert.timer || true
 	@sudo rm -f $(SERVICE_FILE) $(TIMER_FILE)
 	@sudo systemctl daemon-reload
-	@echo "✅ Systemd rimosso."
+	@echo "[OK] Systemd removed."

@@ -7,14 +7,17 @@ import tempfile
 import os
 import pathlib
 
+
 class FritzBoxError(RuntimeError):
     pass
+
 
 def _curl(args: list[str]) -> str:
     res = subprocess.run(["curl", "-sk"] + args, capture_output=True, text=True)
     if res.returncode != 0:
-        raise FritzBoxError(f"Errore curl: {res.stderr.strip()}")
+        raise FritzBoxError(f"curl error: {res.stderr.strip()}")
     return res.stdout
+
 
 def get_sid(base_url: str, username: str, password: str) -> str:
     base = base_url.rstrip("/")
@@ -22,7 +25,7 @@ def get_sid(base_url: str, username: str, password: str) -> str:
     try:
         root = ET.fromstring(xml)
     except ET.ParseError:
-        raise FritzBoxError("Risposta XML non valida da login_sid.lua")
+        raise FritzBoxError("Invalid XML response from login_sid.lua")
 
     sid = root.findtext("SID")
     if sid and sid != "0000000000000000":
@@ -30,7 +33,7 @@ def get_sid(base_url: str, username: str, password: str) -> str:
 
     challenge = root.findtext("Challenge")
     if not challenge:
-        raise FritzBoxError("Challenge non trovata nel login_sid.lua")
+        raise FritzBoxError("Challenge not found in login_sid.lua")
 
     raw = f"{challenge}-{password}".encode("utf-16le")
     md5 = hashlib.md5(raw).hexdigest()
@@ -40,35 +43,37 @@ def get_sid(base_url: str, username: str, password: str) -> str:
     root2 = ET.fromstring(xml2)
     sid = root2.findtext("SID")
     if not sid or sid == "0000000000000000":
-        raise FritzBoxError("Autenticazione FRITZ!Box fallita.")
+        raise FritzBoxError("FRITZ!Box authentication failed.")
     return sid
 
-# === Metodo 1: endpoint nuovo (il nostro già in uso) =========================
+
+# === Method 1: newer endpoint (already used) ===============================
 def upload_cert_certificate_upload_lua(base_url: str, sid: str, pem_file: pathlib.Path, key_file: pathlib.Path) -> None:
     base = base_url.rstrip("/")
     if not pem_file.exists() or not key_file.exists():
-        raise FritzBoxError("File certificato o chiave non trovati.")
+        raise FritzBoxError("Certificate or key file not found.")
 
-    # Nota: su alcune versioni questo carica ma non attiva
+    # Note: on some firmware versions this uploads but does not activate
     _ = _curl([
         "-F", f"sid={sid}",
         "-F", f"boxcert=@{pem_file};type=application/x-x509-ca-cert",
         "-F", f"boxkey=@{key_file};type=application/octet-stream",
-        f"{base}/system/certificate_upload.lua"
+        f"{base}/system/certificate_upload.lua",
     ])
 
-# === Metodo 2: endpoint storico come da UI (firmwarecfg) =====================
+
+# === Method 2: legacy endpoint matching the Web UI (firmwarecfg) ==========
 def upload_cert_firmwarecfg(base_url: str, sid: str, pem_file: pathlib.Path, key_file: pathlib.Path, cert_password: str = "") -> None:
     """
-    Emula l'import dell'interfaccia web:
-    - un unico file "BoxCertImportFile" con key + fullchain (in quest'ordine)
-    - opzionale "BoxCertPassword" (vuoto per PEM non cifrati)
+    Emulates the Web UI import:
+    - single "BoxCertImportFile" containing key + fullchain (in this order)
+    - optional "BoxCertPassword" (empty for unencrypted PEM)
     """
     base = base_url.rstrip("/")
     if not pem_file.exists() or not key_file.exists():
-        raise FritzBoxError("File certificato o chiave non trovati.")
+        raise FritzBoxError("Certificate or key file not found.")
 
-    # crea un file temporaneo con key + fullchain come si aspetta l’UI
+    # Build a temporary file with key + fullchain in the order expected by the UI
     data = key_file.read_bytes() + pem_file.read_bytes()
     with tempfile.NamedTemporaryFile(prefix="fritzcert_", suffix=".pem", delete=False) as tmp:
         tmp.write(data)
@@ -76,21 +81,22 @@ def upload_cert_firmwarecfg(base_url: str, sid: str, pem_file: pathlib.Path, key
         tmp_path = pathlib.Path(tmp.name)
 
     try:
-        # Usa --form come la UI: prima i campi, poi l’URL
+        # Use --form exactly like the UI: fields first, then the URL
         out = _curl([
             "--form", f"sid={sid}",
             "--form", f"BoxCertPassword={cert_password}",
             "--form", f"BoxCertImportFile=@{tmp_path};filename=BoxCert.pem;type=application/octet-stream",
             f"{base}/cgi-bin/firmwarecfg",
         ])
-        # Alcuni firmware non stampano "successful", quindi non falliamo se manca
+        # Some firmware does not print a clear "successful" indicator; don't hard-fail if missing
         if "error" in out.lower():
-            raise FritzBoxError(f"Risposta firmwarecfg: {out.strip()}")
+            raise FritzBoxError(f"firmwarecfg response: {out.strip()}")
     finally:
         try:
             os.remove(tmp_path)
         except Exception:
             pass
+
 
 def deploy_certificate(
     box_name: str,
@@ -100,27 +106,27 @@ def deploy_certificate(
     url = fritz_conf.get("url")
     user = fritz_conf.get("username")
     pwd = fritz_conf.get("password")
-    cert_password = fritz_conf.get("cert_password", "")  # opzionale
+    cert_password = fritz_conf.get("cert_password", "")  # optional
 
     if not url or not user or not pwd:
-        raise FritzBoxError(f"Configurazione FritzBox incompleta per '{box_name}'.")
+        raise FritzBoxError(f"Incomplete FRITZ!Box configuration for '{box_name}'.")
 
     key_file = state_dir / "fritzbox.key"
     pem_file = state_dir / "fritzbox.pem"
 
     sid = get_sid(url, user, pwd)
 
-    print(f"▶ Upload (metodo 1) certificate_upload.lua ...")
+    print("Upload (method 1) certificate_upload.lua ...")
     try:
         upload_cert_certificate_upload_lua(url, sid, pem_file, key_file)
     except Exception as e:
-        print(f"⚠️  Metodo 1 fallito: {e}")
+        print(f"Method 1 failed: {e}")
 
-    print(f"▶ Upload (metodo 2) firmwarecfg ...")
+    print("Upload (method 2) firmwarecfg ...")
     try:
         upload_cert_firmwarecfg(url, sid, pem_file, key_file, cert_password=cert_password)
     except Exception as e:
-        # se proprio anche il metodo 2 fallisce, allora esci
-        raise FritzBoxError(f"Upload firmwarecfg fallito: {e}")
+        # If method 2 fails as well, abort
+        raise FritzBoxError(f"firmwarecfg upload failed: {e}")
 
-    print("✅ Deploy completato")
+    print("Deploy completed")

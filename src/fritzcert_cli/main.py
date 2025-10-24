@@ -1,5 +1,5 @@
 """
-main.py – Entry point CLI per fritzcert
+main.py – CLI entry point for fritzcert
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ def log(msg: str):
 
 
 def cmd_init(args):
-    """Crea un file di configurazione con la sezione account (email obbligatoria)."""
+    """Create a configuration file with the 'account' section (email required)."""
     config.ensure_dirs()
     if not config.CONFIG_PATH.exists():
         body = (
@@ -34,22 +34,22 @@ def cmd_init(args):
         )
         config.CONFIG_PATH.write_text(body, encoding="utf-8")
         os.chmod(config.CONFIG_PATH, 0o640)
-        log(f"Creato file di configurazione: {config.CONFIG_PATH}")
+        log(f"Created configuration file: {config.CONFIG_PATH}")
     else:
-        # se esiste, aggiorna/aggiungi la sezione account mantenendo il resto
+        # If it exists, update/add the account section while preserving the rest
         data = config._load_yaml()  # reuse internal
         data.setdefault("account", {})
         data["account"]["ca"] = args.ca
         data["account"]["email"] = args.email
         config._save_yaml(data)
-        log("Config già presente: aggiornata sezione 'account'.")
-    print(f"Configurazione in {config.CONFIG_PATH}")
+        log("Existing config: updated 'account' section.")
+    print(f"Configuration at {config.CONFIG_PATH}")
 
 
 def cmd_list(args):
     boxes = config.list_boxes()
     if not boxes:
-        print("Nessun Fritz!Box configurato.")
+        print("No Fritz!Box configured.")
         return
     for b in boxes:
         print(f"- {b['name']}: {b['domain']} ({b['dns_provider']['plugin']})")
@@ -60,7 +60,7 @@ def cmd_add_box(args):
     if args.dns_cred:
         for kv in args.dns_cred:
             if "=" not in kv:
-                print(f"Parametro errato: {kv}")
+                print(f"Invalid parameter: {kv}")
                 sys.exit(1)
             k, v = kv.split("=", 1)
             dns_credentials[k] = v
@@ -79,14 +79,14 @@ def cmd_add_box(args):
         fritzbox=fritz_conf,
         key_type=args.key_type,
     )
-    log(f"Aggiunto box {args.name}")
-    print(f"Box '{args.name}' aggiunto con successo.")
+    log(f"Added box {args.name}")
+    print(f"Box '{args.name}' added successfully.")
 
 
 def cmd_remove_box(args):
     config.remove_box(args.name)
-    print(f"Box '{args.name}' rimosso.")
-    log(f"Rimosso box {args.name}")
+    print(f"Box '{args.name}' removed.")
+    log(f"Removed box {args.name}")
 
 
 def cmd_issue(args):
@@ -94,13 +94,13 @@ def cmd_issue(args):
     if args.name:
         boxes = [b for b in boxes if b["name"] == args.name]
     if not boxes:
-        print("Nessun box trovato per l’emissione.")
+        print("No box found to issue.")
         sys.exit(1)
 
     for b in boxes:
         dns = b["dns_provider"]
         creds = dns.get("credentials", {})
-        log(f"Emissione certificato per {b['name']} ({b['domain']})")
+        log(f"Issuing certificate for {b['name']} ({b['domain']})")
         try:
             acme.issue_certificate(
                 box_name=b["name"],
@@ -110,8 +110,8 @@ def cmd_issue(args):
                 key_type=b.get("key_type", "2048"),
             )
         except Exception as e:
-            log(f"Errore emissione {b['name']}: {e}")
-            print(f"❌ Errore su {b['name']}: {e}")
+            log(f"Issue error for {b['name']}: {e}")
+            print(f"Error on {b['name']}: {e}")
 
 
 def cmd_deploy(args):
@@ -119,27 +119,27 @@ def cmd_deploy(args):
     if args.name:
         boxes = [b for b in boxes if b["name"] == args.name]
     if not boxes:
-        print("Nessun box trovato per deploy.")
+        print("No box found to deploy.")
         sys.exit(1)
 
     for b in boxes:
         state_dir = pathlib.Path("/var/lib/fritzcert") / b["name"]
         try:
-            log(f"Deploy su {b['name']}")
+            log(f"Deploy to {b['name']}")
             fritzbox.deploy_certificate(b["name"], b["fritzbox"], state_dir)
         except Exception as e:
-            log(f"Errore deploy {b['name']}: {e}")
-            print(f"❌ Deploy fallito su {b['name']}: {e}")
+            log(f"Deploy error for {b['name']}: {e}")
+            print(f"Deploy failed on {b['name']}: {e}")
 
 
 def cmd_renew(args):
     try:
         acme.renew_all_certificates()
-        print("✅ Rinnovo completato.")
-        log("Rinnovo completato.")
+        print("Renewal completed.")
+        log("Renewal completed.")
     except Exception as e:
-        log(f"Errore rinnovo: {e}")
-        print(f"❌ Errore rinnovo: {e}")
+        log(f"Renew error: {e}")
+        print(f"Renew error: {e}")
 
 
 def cmd_status(args):
@@ -149,7 +149,7 @@ def cmd_status(args):
 
 
 def cmd_install_systemd(args):
-    """Crea un service+timer systemd per rinnovo automatico."""
+    """Install a systemd service and timer for daily automatic renewal and deploy."""
     user = os.environ.get("SUDO_USER") or os.environ.get("USER", "root")
     svc = "/etc/systemd/system/fritzcert.service"
     tim = "/etc/systemd/system/fritzcert.timer"
@@ -179,64 +179,65 @@ WantedBy=timers.target
     pathlib.Path(tim).write_text(tim_body, encoding="utf-8")
     os.system("systemctl daemon-reload")
     os.system("systemctl enable --now fritzcert.timer")
-    print("✅ Timer systemd installato: fritzcert.timer")
+    print("Systemd timer installed: fritzcert.timer")
 
 
 def cmd_register_account(args):
-    """Aggiorna la sezione account nel config e registra presso la CA scelta."""
+    """Update the account section in config and register with the selected CA."""
     try:
         config.set_account(args.ca, args.email)
     except config.ConfigError as e:
-        print(f"❌ {e}")
+        print(f"{e}")
         sys.exit(1)
 
     try:
         acme.ensure_acme_installed()
         acme.ensure_account()
-        print(f"✅ Account registrato: CA={args.ca}, email={args.email}")
+        print(f"Account registered: CA={args.ca}, email={args.email}")
     except Exception as e:
-        print(f"⚠️  Account impostato nel config, ma registrazione ACME fallita: {e}")
-        print("   Puoi riprovare con lo stesso comando o proseguire con 'fritzcert issue'.")
+        print(f"Account saved to config, but ACME registration failed: {e}")
+        print("You can retry with the same command or continue with 'fritzcert issue'.")
 
 
 def main():
     p = argparse.ArgumentParser(
         prog="fritzcert",
-        description="Gestione automatica dei certificati Let's Encrypt per più Fritz!Box",
+        description="Automated Let's Encrypt certificate management for multiple Fritz!Box devices",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    initp = sub.add_parser("init", help="Crea un file di configurazione vuoto (richiede email per il CA)")
-    initp.add_argument("--email", required=True, help="Email account per il CA (usata da acme.sh)")
+    initp = sub.add_parser("init", help="Create an empty configuration file (requires CA email)")
+    initp.add_argument("--email", required=True, help="Email for the CA account (used by acme.sh)")
     initp.add_argument("--ca", default="letsencrypt", choices=["letsencrypt", "zerossl"], help="Certificate Authority")
-    sub.add_parser("list", help="Elenca i Fritz!Box configurati")
 
-    reg = sub.add_parser("register-account", help="Imposta CA ed email e registra l'account ACME")
-    reg.add_argument("--email", required=True, help="Email per l'account ACME (obbligatoria)")
+    sub.add_parser("list", help="List configured Fritz!Box entries")
+
+    reg = sub.add_parser("register-account", help="Set CA and email and register the ACME account")
+    reg.add_argument("--email", required=True, help="Email for the ACME account (required)")
     reg.add_argument("--ca", default="letsencrypt", choices=["letsencrypt", "zerossl"], help="Certificate Authority")
 
-    add = sub.add_parser("add-box", help="Aggiunge o aggiorna un Fritz!Box")
-    add.add_argument("--name", required=True, help="Nome interno del Fritz!Box")
-    add.add_argument("--domain", required=True, help="Dominio per il certificato")
-    add.add_argument("--dns-plugin", required=True, help="Plugin DNS di acme.sh (es: dns_gd, dns_cf)")
-    add.add_argument("--dns-cred", nargs="*", help="Credenziali DNS in forma CHIAVE=VALORE")
-    add.add_argument("--fritz-url", required=True, help="URL completo (es: https://router.dominio.ch)")
-    add.add_argument("--fritz-user", required=True, help="Username Fritz!Box")
-    add.add_argument("--fritz-pass", required=True, help="Password Fritz!Box")
-    add.add_argument("--key-type", default="2048", help="Tipo chiave (2048, ec-256, ecc.)")
+    add = sub.add_parser("add-box", help="Add or update a Fritz!Box entry")
+    add.add_argument("--name", required=True, help="Internal name for the Fritz!Box")
+    add.add_argument("--domain", required=True, help="Domain to issue the certificate for")
+    add.add_argument("--dns-plugin", required=True, help="acme.sh DNS plugin (e.g., dns_gd, dns_cf)")
+    add.add_argument("--dns-cred", nargs="*", help="DNS credentials as KEY=VALUE pairs")
+    add.add_argument("--fritz-url", required=True, help="Full URL (e.g., https://router.example.ch)")
+    add.add_argument("--fritz-user", required=True, help="Fritz!Box username")
+    add.add_argument("--fritz-pass", required=True, help="Fritz!Box password")
+    add.add_argument("--key-type", default="2048", help="Key type (2048, ec-256, etc.)")
 
-    rem = sub.add_parser("remove-box", help="Rimuove un Fritz!Box")
+    rem = sub.add_parser("remove-box", help="Remove a Fritz!Box entry")
     rem.add_argument("--name", required=True)
 
-    iss = sub.add_parser("issue", help="Emette o rinnova certificati")
-    iss.add_argument("--name", help="Limita a un Fritz!Box specifico")
+    iss = sub.add_parser("issue", help="Issue or renew certificates")
+    iss.add_argument("--name", help="Limit to a specific Fritz!Box")
 
-    dep = sub.add_parser("deploy", help="Carica certificato sui Fritz!Box")
-    dep.add_argument("--name", help="Limita a un Fritz!Box specifico")
+    dep = sub.add_parser("deploy", help="Deploy certificate to Fritz!Box")
+    dep.add_argument("--name", help="Limit to a specific Fritz!Box")
 
-    sub.add_parser("renew", help="Esegue rinnovo certificati (tutti i domini)")
-    sub.add_parser("status", help="Mostra stato certificati")
-    sub.add_parser("install-systemd", help="Installa il timer systemd giornaliero")
+    sub.add_parser("renew", help="Run renewal for all certificates")
+    sub.add_parser("status", help="Show certificate status")
+    sub.add_parser("install-systemd", help="Install the daily systemd timer")
 
     args = p.parse_args()
 
