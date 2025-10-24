@@ -1,509 +1,549 @@
 # fritzcert-cli
-### Automated Let's Encrypt certificate management for multiple FRITZ!Box devices
-_A command-line tool for issuing, deploying, and renewing SSL/TLS certificates via acme.sh._
+
+Automated, security-focused management of public TLS certificates for one or more FRITZ!Box devices, powered by a curated integration with `acme.sh`.
+
+The documentation below is intentionally exhaustive: every prerequisite, file, command and operational scenario is described to remove ambiguity during deployment and maintenance.
 
 ---
 
-## Overview
+## 1. Quick Start (Minimum Viable Run)
 
-**fritzcert-cli** automates the complete lifecycle of HTTPS certificates for one or more **FRITZ!Box** routers:
+```
+# 1. Install prerequisites and the CLI
+sudo make install
 
-- Issues certificates using **Let's Encrypt** or **ZeroSSL** through `acme.sh`.
-- Supports any **DNS-01** provider supported by `acme.sh` (GoDaddy, Cloudflare, IONOS, AWS Route53, etc.).
-- Automatically uploads and activates certificates on the FRITZ!Box via HTTPS API or firmware upload.
-- Manages renewals and deployments automatically using **systemd** or cron.
-- Fully configurable through `/etc/fritzcert/config.yaml`.
-- Multi-device, multi-provider, multi-CA support.
+# 2. Create the global configuration with your ACME account
+sudo fritzcert init --email you@example.com --ca letsencrypt
 
-> **Note:** The original version of this project was generated entirely with AI assistance. Please audit and test before deploying in production environments.
+# 3. Register the ACME account (optional for Let's Encrypt, mandatory for ZeroSSL)
+sudo fritzcert register-account --email you@example.com --ca letsencrypt
 
----
+# 4. Add a FRITZ!Box definition (interactive prompts keep secrets off the command line)
+export CF_TOKEN=cf_xxxxxxxx
+sudo --preserve-env=CF_TOKEN fritzcert add-box \
+  --name home \
+  --domain fritzbox.example.com \
+  --dns-plugin dns_cf \
+  --dns-cred CF_Token=@env:CF_TOKEN \
+  --fritz-url https://fritzbox.example.com \
+  --fritz-user admin \
+  --fritz-pass ? \
+  --fritz-ca-file /etc/ssl/certs/ca-certificates.crt
 
-## Features
+# 5. Issue the certificate
+sudo fritzcert issue --name home
 
-- **Multi-CA** - Works with Let's Encrypt (default) or ZeroSSL.  
-- **Multi-DNS Provider** - Compatible with any DNS-01 plugin supported by `acme.sh` (GoDaddy, Cloudflare, IONOS, AWS, etc.).  
-- **Multi-Box Management** - Supports multiple FRITZ!Box routers, each with its own domain, DNS provider, and credentials.  
-- **Automatic Renewal** - Daily certificate renewal and re-deployment via `systemd` timer or the built-in `acme.sh` cron.  
-- **Secure Upload** - Certificates are uploaded to the FRITZ!Box using HTTPS and SID-based challenge authentication.  
-- **Full Logging** - Unified logs under `/var/log/fritzcert/fritzcert.log` and visible through `journalctl`.  
-- **Flexible Installation** - Works with `pipx` or standalone virtual environments under `/opt`.  
-- **Readable Configuration** - YAML-based configuration stored in `/etc/fritzcert/config.yaml` with automatic backups.
+# 6. Deploy the certificate to the FRITZ!Box
+sudo fritzcert deploy --name home
+```
 
----
-
-## Architecture
-
-The system consists of four main layers:
-
-1. **Certificate Authority (CA)**  
-   Handles certificate issuance through Let's Encrypt or ZeroSSL.
-
-2. **acme.sh**  
-   Performs DNS-01 validation using the configured DNS provider credentials (e.g., `GD_Key`, `CF_Token`, etc.).
-
-3. **fritzcert-cli**  
-   Orchestrates certificate issuance, deployment, and renewal. Integrates with acme.sh, manages configuration, and logs all operations.
-
-4. **FRITZ!Box Web Interface**  
-   The tool uploads the certificates to the router via HTTPS using either:
-   - the official API (`system/certificate_upload.lua`), or  
-   - the firmware configuration endpoint (`cgi-bin/firmwarecfg`), which activates the certificate immediately.
+After step 6, browse to `https://fritzbox.example.com` and verify that the FRITZ!Box presents a valid browser-trusted certificate.
 
 ---
 
-## Supported Platforms
+## 2. Requirements
 
-- Debian / Ubuntu / Proxmox / Raspberry Pi OS  
-- Any Linux system with **Python 3.10+**  
-- FRITZ!Box routers supporting HTTPS remote administration (FRITZ!OS 7+ recommended)
+### 2.1 Operating system & tools
+
+- Linux host (Debian, Ubuntu, Proxmox, Raspberry Pi OS, or any distribution with Python 3.10+)
+- Utilities: `bash`, `curl`, `tar`, `openssl`, `systemctl` (for systemd automation), `cron` (optional)
+- `sudo` privileges for installation and FRITZ!Box interactions that require root-owned directories
+
+### 2.2 Python environment
+
+- Python ≥ 3.10
+- `pipx` (installed automatically by `make install` if missing)
+
+### 2.3 FRITZ!Box prerequisites
+
+- FRITZ!OS ≥ 7 recommended
+- HTTPS access enabled on the FRITZ!Box
+- Dedicated FRITZ!Box user/password for certificate administration
+- (Optional) Custom CA certificate if the FRITZ!Box presents a private certificate that you want to pin
+
+### 2.4 DNS provider prerequisites
+
+- A DNS provider supported by `acme.sh` with API credentials capable of satisfying DNS-01 validation
+- For ZeroSSL or other CAs requiring External Account Binding (EAB), obtain the EAB credentials prior to registration
 
 ---
 
-## Installation & Setup
+## 3. Installation & Upgrade Paths
 
-### Requirements
+### 3.1 Recommended: Makefile + pipx (system-wide)
 
-Before installing **fritzcert-cli**, make sure your environment meets the following requirements:
-
-- **Python ≥ 3.10**
-- **curl**, **bash**, **openssl** installed
-- Optional: **systemd** (for automated daily renewal)
-- A FRITZ!Box with **HTTPS access** enabled
-- Root privileges (`sudo`) for initial setup
-
-### Installing via Makefile (Recommended)
-
-The Makefile automates the full setup, including pipx installation, building, and deployment.
-
-```bash
+```
 sudo make install
 ```
 
-This command will:
+Actions performed:
 
-- Install `pipx` if it is missing
-- Build a wheel for the current version
-- Install `fritzcert-cli` globally using pipx
-- Create `/usr/local/bin/fritzcert` symlink
-- Create all required directories:
-  - `/etc/fritzcert/`
-  - `/var/lib/fritzcert/`
-  - `/var/log/fritzcert/`
+1. Installs `pipx` (and `python3-venv`) if they are not present.
+2. Builds the project wheel and installs it via `pipx`.
+3. Creates symlink `/usr/local/bin/fritzcert`.
+4. Creates required directories with secure permissions (`chmod 700`):
+   - `/etc/fritzcert/`
+   - `/etc/fritzcert/backups/`
+   - `/var/lib/fritzcert/`
+   - `/var/log/fritzcert/`
+5. Installs shell completion for bash (and zsh when available).
+6. Installs `fritzcert` systemd service and timer.
 
-After installation, verify:
+**acme.sh bootstrap**  
+The first time you run any `fritzcert` command, the CLI downloads the pinned acme.sh release (`3.0.6` at the time of writing), verifies the SHA256 checksum (`4a8e44c27e2a8f01a978e8d15add8e9908b83f9b1555670e49a9b769421f5fa6`), and installs it under:
 
-```bash
-fritzcert --help
+- `/root/.acme.sh/` when executed as root
+- `$HOME/.acme.sh/` when executed as a non-root user
+
+At no point is a remote script piped directly into `sh`.
+
+### 3.2 Alternative: Dedicated virtual environment in `/opt`
+
 ```
-
-If you get `command not found`, ensure your pipx path is loaded:
-
-```bash
-pipx ensurepath
-exec $SHELL
-```
-
-### Installing via Virtual Environment (Alternative)
-
-If you prefer not to use `pipx`, you can install fritzcert-cli in a system virtual environment under `/opt`.
-
-```bash
 sudo make install-venv
 ```
 
-This will:
-- Create `/opt/fritzcert-cli-venv/`
-- Install all dependencies
-- Create a symlink `/usr/local/bin/fritzcert`
+Creates `/opt/fritzcert-cli-venv/`, installs dependencies inside the virtual environment, and symlinks `/usr/local/bin/fritzcert`.
 
-To uninstall:
+### 3.3 Developer workflow
 
-```bash
+```
+make build       # produces wheel in dist/
+pipx install dist/fritzcert_cli-<version>-py3-none-any.whl --force
+```
+
+To update an existing installation during development:
+
+```
+pipx reinstall fritzcert-cli .
+```
+
+### 3.4 Uninstalling
+
+```
 sudo make uninstall
 ```
 
-### Manual Wheel Build (Developers)
-
-To build a standalone wheel package:
-
-```bash
-make build
-```
-
-The built package will appear under:
-
-```
-dist/fritzcert_cli-<version>-py3-none-any.whl
-```
-
-### Directory Structure
-
-Once installed, fritzcert uses the following directories:
-
-| Path | Description |
-|------|--------------|
-| `/etc/fritzcert/` | Global configuration and backups |
-| `/var/lib/fritzcert/` | Certificates and private keys for each FRITZ!Box |
-| `/var/log/fritzcert/` | Log files for all CLI operations |
-| `/usr/local/bin/fritzcert` | CLI executable |
-
-### Verifying the Installation
-
-Run:
-
-```bash
-fritzcert --help
-```
-
-Expected output:
-
-```
-usage: fritzcert [-h] {init,list,add-box,remove-box,issue,deploy,renew,status,install-systemd,install-completion} ...
-```
-
-If you see this output, the installation is complete.
-
-### Shell Completion
-
-Automatic command completion is available through [`argcomplete`](https://kislyuk.github.io/argcomplete/), which is installed alongside `fritzcert-cli`.
-
-- `make install` automatically installs Bash completions (and Zsh when available) via `fritzcert install-completion`. When run as a regular user, the command also appends a small snippet to your `~/.bashrc` or `~/.zshrc` so completions load on the next shell start.
-- To install manually or to target a different location/shell, run:
-
-  ```bash
-  fritzcert install-completion --shell bash
-  ```
-
-  Use `--shell zsh` for Zsh or `--dest <path>` to override the destination file.
-
-Completions will also suggest any Fritz!Box names already present in your configuration when using `--name` flags, and you can still opt for on-demand activation with:
-
-```bash
-eval "$(register-python-argcomplete fritzcert)"
-```
+This removes the pipx installation (if present), deletes `/opt/fritzcert-cli-venv/`, and removes `/usr/local/bin/fritzcert`. Configuration, certificates, and logs are left untouched.
 
 ---
 
-## Configuration & Usage
+## 4. Directory Layout & Permissions
 
-### Global configuration file
+| Path | Owner | Permissions | Purpose |
+|------|-------|-------------|---------|
+| `/etc/fritzcert/config.yaml` | root | `600` | Main YAML configuration |
+| `/etc/fritzcert/backups/` | root | `700` | Timestamped backups of the configuration |
+| `/var/lib/fritzcert/<box>/fritzbox.pem` | root | `600` | Full chain certificate for each box |
+| `/var/lib/fritzcert/<box>/fritzbox.key` | root | `600` | Private key for each box |
+| `/var/log/fritzcert/fritzcert.log` | root | `644` | Aggregated CLI output |
+| `~/.acme.sh/` or `/root/.acme.sh/` | owner | `700` | acme.sh installation |
 
-**Location:** `/etc/fritzcert/config.yaml`
+`fritzcert` enforces the secure permissions listed above whenever it writes the configuration or secrets. Do not loosen these permissions; commands will abort if group/other access is detected on secret files.
 
-```yaml
+---
+
+## 5. Configuration Model
+
+### 5.1 Configuration file format
+
+```
+/etc/fritzcert/config.yaml
+
 account:
-  ca: letsencrypt            # or zerossl
+  ca: letsencrypt      # or zerossl
   email: you@example.com
 
 boxes:
-  - name: boxname
-    domain: fritzbox.home.example.com
+  - name: home
+    domain: fritzbox.example.com
     key_type: 2048
     dns_provider:
-      plugin: dns_gd
+      plugin: dns_cf
       credentials:
-        GD_Key: "abc"
-        GD_Secret: "def"
+        CF_Token: "...resolved secret..."
     fritzbox:
-      url: https://fritzbox.home.example.com
+      url: https://fritzbox.example.com
       username: admin
-      password: mypassword
-      cert_password: ""      # optional
+      password: "...resolved secret..."
+      cert_password: ""                 # optional (encrypted firmware uploads)
+      ca_cert: /etc/ssl/certs/ca.pem    # optional path to CA bundle
+      allow_insecure: false             # optional, default false
 ```
 
-Notes:
-- Each box may use a different DNS provider.
-- Credential keys must match the variable names expected by the chosen `acme.sh` plugin (e.g., `GD_Key`, `GD_Secret`, `CF_Token`, `IONOS_API_KEY`, etc.).
-- Supported key types: `2048`, `3072`, `4096`, `ec-256`, `ec-384`.
+`fritzcert add-box` writes to this file; manual edits are possible but discouraged. Each modification triggers a backup under `/etc/fritzcert/backups/`.
 
-### DNS Provider Configuration
+### 5.2 Secret handling
 
-Each FRITZ!Box entry in `/etc/fritzcert/config.yaml` specifies a `dns_provider`.  
-The `plugin` name corresponds directly to the **acme.sh DNS plugin**, and the `credentials`
-section must define the environment variables required by that plugin.
+CLI flags accept the following syntaxes for secrets:
 
-Below are examples for the most commonly used DNS providers supported by acme.sh:
+| Syntax | Meaning | Example |
+|--------|---------|---------|
+| `?` | Prompt interactively using `getpass` | `--fritz-pass ?` |
+| `@env:NAME` | Read from environment variable `NAME` | `--dns-cred CF_Token=@env:CF_TOKEN` |
+| literal value | Use string as-is (least secure) | `--dns-cred CF_Token=mytoken` |
+| `--*-file PATH` | Read from file (`chmod 600` required) | `--fritz-pass-file /root/pass.txt` |
 
-| Provider | Plugin name (`dns_plugin`) | Required credentials |
-|-----------|----------------------------|----------------------|
-| **GoDaddy** | `dns_gd` | `GD_Key` and `GD_Secret` |
-| **Cloudflare (API Token)** | `dns_cf` | `CF_Token` |
-| **Cloudflare (Global API Key)** | `dns_cf` | `CF_Key` and `CF_Email` |
-| **IONOS (1&1)** | `dns_ionos` | `IONOS_API_KEY` and `IONOS_API_SECRET` |
-| **AWS Route53** | `dns_aws` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION` *(optional)* |
-| **Google Cloud DNS** | `dns_gcloud` | `GOOGLE_APPLICATION_CREDENTIALS` (path to a JSON key file) |
-| **DigitalOcean** | `dns_dgon` | `DO_API_KEY` |
-| **Namecheap** | `dns_namecheap` | `NAMECHEAP_USERNAME` and `NAMECHEAP_API_KEY` |
-| **OVH** | `dns_ovh` | `OVH_AK`, `OVH_AS`, `OVH_CK` |
-| **Hetzner DNS** | `dns_hetzner` | `HETZNER_Token` |
-| **Azure DNS** | `dns_azure` | `AZUREDNS_SUBSCRIPTIONID`, `AZUREDNS_TENANTID`, `AZUREDNS_APPID`, `AZUREDNS_CLIENTSECRET` |
-| **DuckDNS** | `dns_duckdns` | `DuckDNS_Token` |
-| **PowerDNS** | `dns_pdns` | `PDNS_Url`, `PDNS_ServerId`, `PDNS_Token` |
-| **TransIP** | `dns_transip` | `TRANSIP_Username`, `TRANSIP_AccessToken` |
-| **Dynu** | `dns_dynu` | `Dynu_ClientId`, `Dynu_Secret` |
+When neither `--fritz-pass` nor `--fritz-pass-file` is supplied, `add-box` prompts automatically (if stdin is a TTY). Environment variables must be exported before invoking `fritzcert` and preserved when using `sudo`, e.g.:
 
-> 💡 **Tip:** you can see all supported providers and their variables by running:  
-> ```bash
-> sudo /root/.acme.sh/acme.sh --list-dns
-> ```
-
-#### Example: Cloudflare API Token
-```yaml
-dns_provider:
-  plugin: dns_cf
-  credentials:
-    CF_Token: "your_cloudflare_token"
+```
+export CF_TOKEN=cf_xxxxx
+sudo --preserve-env=CF_TOKEN fritzcert add-box ...
 ```
 
-#### Example: GoDaddy
-```yaml
-dns_provider:
-  plugin: dns_gd
-  credentials:
-    GD_Key: "your_godaddy_key"
-    GD_Secret: "your_godaddy_secret"
+### 5.3 TLS verification towards the FRITZ!Box
+
+- By default, `fritzcert` verifies the FRITZ!Box HTTPS certificate.
+- Provide `--fritz-ca-file` to pin a specific CA bundle if the FRITZ!Box is secured by a private CA.
+- Set `--allow-insecure-tls` only as a last resort; it toggles `curl -k`.
+
+### 5.4 Restoring from backup
+
 ```
-
-#### Example: AWS Route53
-```yaml
-dns_provider:
-  plugin: dns_aws
-  credentials:
-    AWS_ACCESS_KEY_ID: "your_access_key"
-    AWS_SECRET_ACCESS_KEY: "your_secret_key"
-    AWS_REGION: "eu-central-1"
+sudo ls /etc/fritzcert/backups/
+sudo cp /etc/fritzcert/backups/config-20250101-101530.yaml /etc/fritzcert/config.yaml
+sudo chmod 600 /etc/fritzcert/config.yaml
 ```
-
-You can mix providers freely - each FRITZ!Box can use a different plugin and credentials.
-
-### Initialize configuration
-
-```bash
-sudo fritzcert init --email you@example.com --ca letsencrypt
-```
-
-Creates or updates `/etc/fritzcert/config.yaml` with the chosen CA and email.
-
-### Register ACME account
-
-```bash
-sudo fritzcert register-account --email you@example.com --ca zerossl
-```
-
-Sets CA + email and registers the account with acme.sh.
-
-### List boxes
-
-```bash
-fritzcert list
-```
-
-### Add or update a box
-
-```bash
-sudo fritzcert add-box   --name office   --domain fritzbox.office.example.com   --dns-plugin dns_cf   --dns-cred CF_Token=cf_xxxxxxx   --fritz-url https://fritzbox.office.example.com   --fritz-user admin   --fritz-pass mysecret   --key-type ec-256
-```
-
-### Remove a box
-
-```bash
-sudo fritzcert remove-box --name office
-```
-
-### Issue or renew certificate for a box
-
-```bash
-sudo fritzcert issue --name office
-```
-
-- Generates the certificate via acme.sh (DNS-01).
-- Installs it under `/var/lib/fritzcert/<box>/`.
-- Uses the configured CA and DNS plugin.
-
-### Deploy certificate to FRITZ!Box
-
-```bash
-sudo fritzcert deploy --name office
-```
-
-Uploads the key and certificate via:
-1. `system/certificate_upload.lua` (API)  
-2. Fallback: `cgi-bin/firmwarecfg` (Web UI import)
-
-### Renew all certificates (on demand)
-
-```bash
-sudo fritzcert renew
-```
-
-### Show certificate status
-
-```bash
-fritzcert status
-```
-
-Displays certificate paths and expiry.
 
 ---
 
-## Automatic Renewal & Deployment
+## 6. Command Reference
 
-### Option 1 - Systemd (recommended)
+### 6.1 Summary table
 
-Install the service and timer:
+| Command | Purpose | Key options |
+|---------|---------|-------------|
+| `fritzcert init` | Create or update `/etc/fritzcert/config.yaml` account section | `--email`, `--ca` |
+| `fritzcert register-account` | Register ACME account with the configured CA | `--email`, `--ca` |
+| `fritzcert list` | Display configured boxes | n/a |
+| `fritzcert add-box` | Add or update a FRITZ!Box definition | `--dns-plugin`, `--dns-cred`, `--fritz-pass`, TLS options |
+| `fritzcert remove-box` | Delete a box from the configuration | `--name` |
+| `fritzcert issue` | Issue/renew certificates via acme.sh | `--name` (optional) |
+| `fritzcert deploy` | Upload and activate certificates on the FRITZ!Box | `--name` (optional) |
+| `fritzcert renew` | Run acme.sh cron for all boxes | n/a |
+| `fritzcert status` | Show local certificate paths and expiry | n/a |
+| `fritzcert install-systemd` | Install service + timer for daily automation | n/a |
+| `fritzcert install-completion` | Install shell completions | `--shell`, `--dest` |
 
-```bash
-sudo make install-systemd
+Each command is detailed below with syntax, examples and expected output.
+
+### 6.2 `fritzcert init`
+
+- **Syntax**: `sudo fritzcert init --email EMAIL --ca {letsencrypt,zerossl}`
+- **Creates** `/etc/fritzcert/config.yaml` if absent; otherwise only updates `account` section.
+- **Output sample**:
+  ```
+  [26273] Created configuration file: /etc/fritzcert/config.yaml
+  Configuration at /etc/fritzcert/config.yaml
+  ```
+- **Notes**: Ensures config directories exist (`chmod 700`) and sets file mode to `600`.
+
+### 6.3 `fritzcert register-account`
+
+- **Syntax**: `sudo fritzcert register-account --email EMAIL --ca CA`
+- **Purpose**: Idempotent registration with acme.sh. Safe to run multiple times.
+- **Output sample**:
+  ```
+  Account registered: CA=letsencrypt, email=you@example.com
+  ```
+- **Failure handling**: If acme.sh cannot register immediately (e.g. network issue), the configuration still stores the CA/email; re-run the command when the issue is resolved.
+
+### 6.4 `fritzcert list`
+
+- **Syntax**: `fritzcert list`
+- **Output**:
+  ```
+  - home: fritzbox.home.example.com (dns_gd)
+  - office: fritzbox.office.example.com (dns_cf)
+  ```
+- **Exit codes**: `0` on success; `0` with message `No Fritz!Box configured.` when empty configuration.
+
+### 6.5 `fritzcert add-box`
+
+- **Syntax** (abridged):
+  ```
+  sudo fritzcert add-box \
+    --name NAME \
+    --domain DOMAIN \
+    --dns-plugin PLUGIN \
+    [--dns-cred KEY=VALUE ... | --dns-cred-file PATH] \
+    --fritz-url URL \
+    --fritz-user USER \
+    [--fritz-pass VALUE | --fritz-pass-file PATH] \
+    [--fritz-ca-file PATH] \
+    [--allow-insecure-tls] \
+    [--key-type KEYTYPE]
+  ```
+- **Secrets**: `VALUE` may be `?`, `@env:VAR`, or a literal.
+- **Idempotency**: Re-running with the same `--name` replaces previous settings.
+- **Example (combining interactive prompt and env variable)**:
+  ```
+  export CF_TOKEN=cf_xxxxx
+  sudo --preserve-env=CF_TOKEN fritzcert add-box \
+    --name office \
+    --domain fritzbox.office.example.com \
+    --dns-plugin dns_cf \
+    --dns-cred CF_Token=@env:CF_TOKEN \
+    --fritz-url https://fritzbox.office.example.com \
+    --fritz-user admin \
+    --fritz-pass ? \
+    --key-type ec-256
+  ```
+- **Result**: Updates `/etc/fritzcert/config.yaml`, prints `Box 'office' added successfully.`
+- **Validation**: Ensures required fields and secure permissions on secret files.
+
+### 6.6 `fritzcert remove-box`
+
+- **Syntax**: `sudo fritzcert remove-box --name NAME`
+- **Output**:
+  ```
+  Box 'office' removed.
+  ```
+- **Error** (non-existent name):
+  ```
+  No box found with name 'office'.
+  ```
+
+### 6.7 `fritzcert issue`
+
+- **Syntax**: `sudo fritzcert issue [--name NAME]`
+- **Purpose**: Executes `acme.sh --issue` with the configured DNS plugin and credentials. Without `--name`, all boxes are processed.
+- **Output**: Streams progress to stdout; logs commands executed (`[acme.sh] exec ...`). On success prints `[OK] Certificate written to /var/lib/fritzcert/<box>/fritzbox.pem`.
+- **Error handling**: Non-zero acme.sh exit codes produce a detailed error containing stdout and stderr from acme.sh.
+
+### 6.8 `fritzcert deploy`
+
+- **Syntax**: `sudo fritzcert deploy [--name NAME]`
+- **Behavior**:
+  1. Obtains SID using `login_sid.lua` with challenge-response.
+  2. Uploads via `system/certificate_upload.lua`.
+  3. Always attempts fallback `cgi-bin/firmwarecfg`.
+- **Output**:
+  ```
+  Upload (method 1) certificate_upload.lua ...
+  Upload (method 2) firmwarecfg ...
+  Deploy completed
+  ```
+- **TLS options**: Uses `ca_cert` or `allow_insecure` from configuration.
+
+### 6.9 `fritzcert renew`
+
+- **Syntax**: `sudo fritzcert renew`
+- **Purpose**: Calls `acme.sh --cron --home <ACME_HOME>` to renew due certificates. Suitable for periodic automation.
+- **Output**:
+  ```
+  [INFO] Running acme.sh --cron ...
+  [OK] Renewal pass completed.
+  ```
+
+### 6.10 `fritzcert status`
+
+- **Syntax**: `fritzcert status`
+- **Output**:
+  ```
+  [home] Certificate: /var/lib/fritzcert/home/fritzbox.pem
+    Key: /var/lib/fritzcert/home/fritzbox.key
+    Expires: May 13 21:45:20 2025 GMT
+  ```
+- Reports `No certificate found.` if the PEM is missing.
+
+### 6.11 `fritzcert install-systemd`
+
+- **Syntax**: `sudo fritzcert install-systemd`
+- **Effect**: Writes `/etc/systemd/system/fritzcert.service` and `.timer`, reloads systemd, enables the timer immediately.
+- **To inspect**: `systemctl status fritzcert.timer` and `journalctl -u fritzcert.service`.
+- **Removal**: `sudo fritzcert install-systemd` is idempotent; to remove use `sudo make uninstall-systemd` (see §7).
+
+### 6.12 `fritzcert install-completion`
+
+- **Syntax**:
+  ```
+  fritzcert install-completion --shell {bash,zsh} [--dest PATH]
+  ```
+- **Notes**:
+  - Installs the completion script to the default location for the specified shell (root vs non-root paths differ).
+  - Appends a sourcing snippet to `~/.bashrc` or `~/.zshrc` when running as a non-root user.
+  - Run as root to install system-wide completions; re-run as the target user to enable completion in their profile.
+
+---
+
+## 7. Makefile Targets
+
+| Target | Description |
+|--------|-------------|
+| `make install` | Full installation via pipx, directory setup, completion install, systemd automation |
+| `make install-venv` | Install in `/opt/fritzcert-cli-venv/` virtual environment |
+| `make uninstall` | Remove pipx/venv installation (keeps configuration/state) |
+| `make update` | `git pull` + pipx reinstall (or venv refresh) |
+| `make build` | Build wheel(s) in `dist/` |
+| `make dirs` | Only create directories (`/etc`, `/var/lib`, `/var/log`) with secure permissions |
+| `make install-systemd` | Install/enable systemd units (same as CLI command) |
+| `make uninstall-systemd` | Disable and remove the systemd units |
+| `make clean` | Remove build artefacts (`dist`, `build`, `__pycache__`, etc.) |
+
+---
+
+## 8. Automation Strategies
+
+### 8.1 Systemd (recommended)
+
+```
+sudo fritzcert install-systemd
+systemctl status fritzcert.timer
 ```
 
-This creates:
-- `/etc/systemd/system/fritzcert.service`
-- `/etc/systemd/system/fritzcert.timer`
+- Runs daily with a randomized delay (default `OnCalendar=daily`, `RandomizedDelaySec=1800`).
+- Unit files are located in `/etc/systemd/system/`.
+- Logs accessible via `journalctl -u fritzcert.service`.
 
-Behavior:
-- `fritzcert.service`: runs `fritzcert renew` then `fritzcert deploy`.
-- `fritzcert.timer`: triggers the service daily with a randomized delay.
+Disable/remove automation:
 
-Check status and logs:
-
-```bash
-systemctl list-timers | grep fritzcert
-journalctl -u fritzcert.service -n 50 --no-pager
+```
+sudo make uninstall-systemd
 ```
 
-### Option 2 - Cron (if systemd is unavailable)
+### 8.2 Cron (fallback when systemd is unavailable)
 
-Edit root crontab:
-
-```bash
+```
 sudo crontab -e
 ```
 
-Add a line (renew + deploy + log to file):
+Add a line such as:
 
-```cron
+```
 0 3 * * * /root/.acme.sh/acme.sh --cron --home "/root/.acme.sh" > /dev/null; /usr/local/bin/fritzcert deploy >> /var/log/fritzcert/cron.log 2>&1
 ```
 
----
-
-## File Locations
-
-| Path | Purpose |
-|------|----------|
-| `/etc/fritzcert/config.yaml` | Main configuration |
-| `/var/lib/fritzcert/<box>/` | Stored key + certificate |
-| `/var/log/fritzcert/fritzcert.log` | CLI logs |
-| `/usr/local/bin/fritzcert` | Global CLI executable |
+Adjust paths as required for non-root installations.
 
 ---
 
-## Internal Components
+## 9. Logs & Diagnostics
 
-| Component | Role |
-|------------|------|
-| `config.py` | Loads/saves YAML config, manages boxes, backups |
-| `acme.py` | Integrates with `acme.sh` for issuance/renewal |
-| `fritzbox.py` | Handles FRITZ!Box login, upload, and import |
-| `main.py` | CLI entry point and argument parser |
-| `utils.py` | Common logging and file utilities |
-| `Makefile` | Build and installation automation |
+| Location | Contents |
+|----------|----------|
+| `/var/log/fritzcert/fritzcert.log` | High-level log of command executions |
+| `journalctl -u fritzcert.service` | Detailed output from automated renew/deploy runs |
+| `/root/.acme.sh/acme.sh.log` | acme.sh cron log (when cron is used) |
 
----
+**Log rotation**: Managed externally (e.g. `logrotate`). Add `/var/log/fritzcert/fritzcert.log` to your rotation policy if needed.
 
-## Security Notes
+### Useful troubleshooting commands
 
-- Private keys are stored in `/var/lib/fritzcert/<box>/` with `600` permissions.
-- Authentication uses the FRITZ!Box challenge-response SID mechanism.
-- No passwords or API keys are written to logs.
-- TLS uploads are performed over HTTPS (`curl -sk`).
-
----
-
-## Troubleshooting
-
-### Certificate not activated after upload
-Use the firmwarecfg method (fallback). If it still shows self-signed:
-- Ensure you are visiting the box via its **domain name** (`https://yourdomain.example.com`), not IP or `fritz.box`.
-- Reboot the FRITZ!Box to reload the web server certificate.
-
-### `acme.sh --issue` error mentioning EAB
-You are using **ZeroSSL** without registering the account. Run:
-```bash
-sudo fritzcert register-account --email you@example.com --ca zerossl
 ```
+# Check the latest backup of the configuration
+sudo ls -ltr /etc/fritzcert/backups/
 
-### Permission denied creating `/etc/fritzcert`
-Run setup commands with `sudo`.
+# Inspect the TLS certificate presented by the FRITZ!Box
+echo | openssl s_client -connect fritzbox.example.com:443 -servername fritzbox.example.com 2>/dev/null | openssl x509 -noout -issuer -subject -enddate
 
-### `fritzcert: command not found`
-Ensure `pipx ensurepath` has been executed and reopen your shell, or create a global symlink:
-```bash
-sudo ln -sf ~/.local/bin/fritzcert /usr/local/bin/fritzcert
+# Manually test the FRITZ!Box login endpoint
+curl -s https://fritzbox.example.com/login_sid.lua
 ```
 
 ---
 
-## Example Workflow
+## 10. Security Best Practices
 
-```bash
-# 1. Initialize
-sudo fritzcert init --email you@example.com --ca letsencrypt
+1. **Principle of least privilege**: run `fritzcert` with the minimum required privileges. Interactive commands typically require root only because the configuration and state directories are root-owned.
+2. **Secrets off the command line**: prefer `?` prompts or `@env:` descriptors. Literal secrets remain visible in process listings.
+3. **CA pinning**: specify `--fritz-ca-file` for each box to prevent man-in-the-middle attacks when communicating with the FRITZ!Box.
+4. **Avoid `--allow-insecure-tls`**: enabling it suppresses certificate verification; use only for temporary troubleshooting.
+5. **Review backups**: `/etc/fritzcert/backups/` inherits `chmod 700`. Keep it on secure storage and include in your system backups.
+6. **Audit the FRITZ!Box**: ensure the administrative password is unique and strong; restrict WAN access to the FRITZ!Box management interface.
+7. **Monitor automation**: configure alerting (e.g. via `systemd` OnFailure directives) to be notified if renewals fail.
 
-# 2. Add box
-sudo fritzcert add-box   --name home   --domain fritzbox.home.example.com   --dns-plugin dns_gd   --dns-cred GD_Key=xxxxx GD_Secret=yyyyy   --fritz-url https://fritzbox.home.example.com   --fritz-user admin   --fritz-pass mypassword
+---
 
-# 3. Issue
-sudo fritzcert issue --name home
+## 11. Maintenance & Updates
 
-# 4. Deploy
-sudo fritzcert deploy --name home
+### 11.1 Updating fritzcert-cli
 
-# 5. Enable auto-renew
-sudo make install-systemd
+```
+git pull
+make update
 ```
 
----
+`make update` reinstalls the CLI via pipx (or refreshes the `/opt` venv) after pulling the latest sources.
 
-## Makefile Commands
+### 11.2 Upgrading acme.sh version
 
-| Command | Description |
-|----------|--------------|
-| `make install` | Install via pipx (auto-installs pipx) |
-| `make uninstall` | Remove fritzcert-cli |
-| `make update` | Rebuild and reinstall |
-| `make build` | Create `.whl` package |
-| `make install-venv` | Install in /opt virtualenv |
-| `make install-systemd` | Add daily renew+deploy systemd timer |
-| `make uninstall-systemd` | Remove timer and service |
-| `make clean` | Clean build and cache files |
+If you need a newer acme.sh release:
 
----
+1. Update `ACME_VERSION` and `ACME_ARCHIVE_SHA256` in `src/fritzcert_cli/acme.py`.
+2. Reinstall fritzcert-cli (`make update`).
+3. Re-run `fritzcert issue` to ensure the new version operates correctly.
 
-## License
+### 11.3 Uninstalling cleanly
 
-MIT License  
-Copyright © 2025  
-Author: Jacopo Maria Briccola
+```
+sudo make uninstall       # removes CLI
+sudo make uninstall-systemd
+sudo rm -rf /etc/fritzcert /var/lib/fritzcert /var/log/fritzcert
+sudo rm -rf /root/.acme.sh
+```
+
+Delete configuration/state only when you are certain they are no longer needed.
 
 ---
 
-## Contributing
+## 12. Troubleshooting Guide
 
-Pull requests are welcome. Please:
-1. Follow PEP8 style.
-2. Test on at least one FRITZ!Box model.
+| Symptom | Possible cause | Resolution |
+|---------|----------------|------------|
+| `Box 'name' not found.` | Typo in `--name` or box not configured | Run `fritzcert list` to confirm names |
+| `acme.sh --issue failed ... EAB required` | ZeroSSL or CA requiring EAB credentials | Register account with appropriate EAB values, verify `config.yaml` |
+| `firmwarecfg upload failed` | FRITZ!Box rejecting the certificate | Verify CA pinning, ensure the FRITZ!Box trusts the chain, retry after reboot |
+| `Permission denied writing completion script` | Destination requires elevated privileges | Re-run with `sudo` or specify a path under your home directory |
+| acme.sh download failure | Network restrictions or outdated hash/version | Check connectivity, update SHA256 in `acme.py` if the upstream release changed |
+| Certificate not activated | FRITZ!Box still serves old certificate | Access via the hostname (not IP), trigger FRITZ!Box reboot if necessary |
+| `Fritz!Box authentication failed.` | Incorrect credentials or IP restrictions | Verify username/password, ensure FRITZ!Box allows login from host |
 
-> ⚠️ **AI-generated foundation:** The initial codebase was produced with AI assistance. Review, adapt, and test to ensure it meets your security and quality standards before deploying.
+Additional tips:
+
+- Use `openssl x509 -in /var/lib/fritzcert/<box>/fritzbox.pem -text -noout` to inspect the certificate before deployment.
+- If `fritzcert issue` fails on DNS validation, confirm that the DNS provider credentials have sufficient permissions and that propagation time is respected.
 
 ---
 
-## Support
+## 13. Frequently Asked Questions
 
-- GitHub: https://github.com/jmbriccola/fritzcert/issues
+**Q1**: *Can I manage multiple FRITZ!Box devices with different DNS providers?*  
+**A**: Yes. Each `boxes` entry specifies its own `dns_provider` and credentials. `fritzcert issue` and `deploy` iterate over all boxes unless restricted via `--name`.
+
+**Q2**: *Can I use HTTP-01 challenges instead of DNS-01?*  
+**A**: Not in the current release. `fritzcert` relies solely on DNS-01 to avoid exposing the FRITZ!Box’s HTTP interface externally.
+
+**Q3**: *Where is the FRITZ!Box password stored?*  
+**A**: Inside `/etc/fritzcert/config.yaml`, written with `chmod 600`. Protect this file accordingly and monitor `/etc/fritzcert/backups/`.
+
+**Q4**: *How do I stage certificates for testing?*  
+**A**: Set the account CA to Let’s Encrypt’s staging environment by editing `config.yaml` and pointing `acme.sh` to the staging server (`--server letsencrypt_test` in `acme.py` if desired).
+
+**Q5**: *Does the CLI support IPv6-only environments?*  
+**A**: Yes, as long as the FRITZ!Box and DNS provider are reachable over IPv6.
+
+---
+
+## 14. Contributing & Support
+
+- Repository: https://github.com/jmbriccola/fritzcert
+- Issues: https://github.com/jmbriccola/fritzcert/issues
 - Email: jmbriccola@gmail.com
 
+When submitting issues, include:
+
+1. Output of `fritzcert --version`
+2. Relevant command output (redact credentials)
+3. `journalctl -u fritzcert.service` excerpts, if automation is involved
+4. FRITZ!Box model and FRITZ!OS version
+
+Pull requests are welcome. Please adhere to PEP 8, include unit/integration tests where feasible, and document new behavior in this README.
+
 ---
 
-Automate certificate management. Keep your FRITZ!Box secure - the easy way.
+## 15. Licensing
+
+MIT License © 2025 Jacopo Maria Briccola
+
+The project started from an AI-assisted codebase and has been hardened for production usage; nevertheless, audit the code in your environment, especially when interacting with critical infrastructure.

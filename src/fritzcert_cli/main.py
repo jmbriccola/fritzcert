@@ -4,9 +4,11 @@ main.py – CLI entry point for fritzcert
 
 from __future__ import annotations
 import argparse
+import getpass
 import sys
 import pathlib
 import os
+import stat
 import tempfile
 import shutil
 import subprocess
@@ -158,7 +160,12 @@ def cmd_init(args):
             "boxes: []\n"
         )
         config.CONFIG_PATH.write_text(body, encoding="utf-8")
-        os.chmod(config.CONFIG_PATH, 0o640)
+        try:
+            os.chmod(config.CONFIG_PATH, config.SECURE_FILE_MODE)
+        except PermissionError as exc:
+            raise config.ConfigError(
+                f"Unable to set secure permissions on {config.CONFIG_PATH}: {exc}"
+            ) from exc
         log(f"Created configuration file: {config.CONFIG_PATH}")
     else:
         # If it exists, update/add the account section while preserving the rest
@@ -180,21 +187,169 @@ def cmd_list(args):
         print(f"- {b['name']}: {b['domain']} ({b['dns_provider']['plugin']})")
 
 
+def _assert_secret_file(path: pathlib.Path, label: str) -> pathlib.Path:
+    """Ensure secret file exists with owner-only permissions."""
+    try:
+        st = path.stat()
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"{label} file not found: {path}") from exc
+    except PermissionError as exc:
+        raise RuntimeError(f"Unable to read metadata for {label} file {path}: {exc}") from exc
+
+    mode = stat.S_IMODE(st.st_mode)
+    if mode & 0o077:
+        raise RuntimeError(f"{label} file {path} must not be accessible by group or others (use chmod 600).")
+    return path
+
+
+def _load_secret_kv_file(path: pathlib.Path, label: str) -> dict[str, str]:
+    """Parse KEY=VALUE pairs from a secret file."""
+    secret_path = _assert_secret_file(path, label)
+    content = secret_path.read_text(encoding="utf-8")
+    data: dict[str, str] = {}
+    for idx, line in enumerate(content.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "=" not in stripped:
+            raise RuntimeError(f"{label} file {secret_path} line {idx} is missing '='.")
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            raise RuntimeError(f"{label} file {secret_path} line {idx} has an empty key.")
+        if not value:
+            raise RuntimeError(f"{label} file {secret_path} line {idx} has an empty value.")
+        data[key] = value
+    if not data:
+        raise RuntimeError(f"{label} file {secret_path} does not contain any credentials.")
+    return data
+
+
+def _read_secret_value(path: pathlib.Path, label: str) -> str:
+    """Read a single secret (password/token) from a file."""
+    secret_path = _assert_secret_file(path, label)
+    value = secret_path.read_text(encoding="utf-8").strip()
+    if not value:
+        raise RuntimeError(f"{label} file {secret_path} is empty.")
+    return value
+
+
+def _resolve_secret_descriptor(raw: str, label: str) -> str:
+    """
+    Interpret special descriptors for secrets:
+    - "?" -> prompt via getpass
+    - "@env:VAR" -> use environment variable VAR
+    - otherwise return value as-is
+    """
+    descriptor = raw.strip()
+    if descriptor == "?":
+        if not sys.stdin.isatty():
+            raise RuntimeError(f"{label} prompt requires an interactive terminal.")
+        value = getpass.getpass(f"{label}: ")
+        if not value:
+            raise RuntimeError(f"{label} cannot be empty.")
+        return value
+    if descriptor.startswith("@env:"):
+        env_var = descriptor[len("@env:") :].strip()
+        if not env_var:
+            raise RuntimeError(f"{label} environment variable name is empty.")
+        value = os.environ.get(env_var)
+        if value is None:
+            raise RuntimeError(f"{label} environment variable '{env_var}' is not set.")
+        if not value:
+            raise RuntimeError(f"{label} environment variable '{env_var}' is empty.")
+        return value
+    return descriptor
+
+
 def cmd_add_box(args):
-    dns_credentials = {}
+    raw_dns_entries: list[str] = []
+
     if args.dns_cred:
-        for kv in args.dns_cred:
+        for group in args.dns_cred:
+            raw_dns_entries.extend(group)
+
+    if raw_dns_entries and args.dns_cred_file:
+        print("Use either --dns-cred or --dns-cred-file (not both).", file=sys.stderr)
+        sys.exit(1)
+
+    dns_credentials: dict[str, str] = {}
+    if args.dns_cred_file:
+        try:
+            dns_credentials = _load_secret_kv_file(
+                pathlib.Path(args.dns_cred_file).expanduser(),
+                "DNS credential",
+            )
+        except RuntimeError as exc:
+            print(f"{exc}", file=sys.stderr)
+            sys.exit(1)
+    elif raw_dns_entries:
+        insecure_keys: set[str] = set()
+        for kv in raw_dns_entries:
             if "=" not in kv:
-                print(f"Invalid parameter: {kv}")
+                print(f"Invalid parameter: {kv}", file=sys.stderr)
                 sys.exit(1)
-            k, v = kv.split("=", 1)
-            dns_credentials[k] = v
+            key, raw_value = kv.split("=", 1)
+            key = key.strip()
+            if not key:
+                print(f"Invalid credential key in '{kv}'", file=sys.stderr)
+                sys.exit(1)
+            raw_value = raw_value.strip()
+            try:
+                resolved = _resolve_secret_descriptor(raw_value, f"{key} credential")
+            except RuntimeError as exc:
+                print(f"{exc}", file=sys.stderr)
+                sys.exit(1)
+            if resolved == raw_value:
+                insecure_keys.add(key)
+            dns_credentials[key] = resolved
+        if insecure_keys:
+            log(
+                "NOTE: DNS credentials provided directly via CLI arguments for keys: "
+                + ", ".join(sorted(insecure_keys))
+            )
+
+    fritz_password: str
+    if args.fritz_pass and args.fritz_pass_file:
+        print("Use either --fritz-pass or --fritz-pass-file (not both).", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        if args.fritz_pass_file:
+            fritz_password = _read_secret_value(
+                pathlib.Path(args.fritz_pass_file).expanduser(),
+                "Fritz!Box password",
+            )
+        elif args.fritz_pass:
+            fritz_password = _resolve_secret_descriptor(args.fritz_pass, "Fritz!Box password")
+            if fritz_password == args.fritz_pass:
+                log("NOTE: Fritz!Box password provided directly via CLI argument (visible in process table).")
+        else:
+            if not sys.stdin.isatty():
+                print(
+                    "Fritz!Box password required but stdin is not interactive. "
+                    "Use --fritz-pass-file or --fritz-pass @env:VAR.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            fritz_password = getpass.getpass("Fritz!Box password: ")
+            if not fritz_password:
+                print("Fritz!Box password cannot be empty.", file=sys.stderr)
+                sys.exit(1)
+    except RuntimeError as exc:
+        print(f"{exc}", file=sys.stderr)
+        sys.exit(1)
 
     fritz_conf = {
         "url": args.fritz_url,
         "username": args.fritz_user,
-        "password": args.fritz_pass,
+        "password": fritz_password,
     }
+    if args.fritz_ca_file:
+        fritz_conf["ca_cert"] = os.path.expanduser(args.fritz_ca_file)
+    if args.allow_insecure_tls:
+        fritz_conf["allow_insecure"] = True
 
     config.add_or_update_box(
         name=args.name,
@@ -378,10 +533,36 @@ def main():
     add.add_argument("--name", required=True, help="Internal name for the Fritz!Box")
     add.add_argument("--domain", required=True, help="Domain to issue the certificate for")
     add.add_argument("--dns-plugin", required=True, help="acme.sh DNS plugin (e.g., dns_gd, dns_cf)")
-    add.add_argument("--dns-cred", nargs="*", help="DNS credentials as KEY=VALUE pairs")
+    add.add_argument(
+        "--dns-cred",
+        metavar="KEY=VALUE",
+        action="append",
+        nargs="+",
+        help="DNS credentials as KEY=VALUE pairs. Use VALUE='?' to prompt, VALUE='@env:VAR' to read from environment.",
+    )
+    add.add_argument(
+        "--dns-cred-file",
+        help="File containing DNS credentials (KEY=VALUE per line, chmod 600).",
+    )
     add.add_argument("--fritz-url", required=True, help="Full URL (e.g., https://router.example.ch)")
     add.add_argument("--fritz-user", required=True, help="Fritz!Box username")
-    add.add_argument("--fritz-pass", required=True, help="Fritz!Box password")
+    add.add_argument(
+        "--fritz-pass",
+        help="Fritz!Box password. Use '?' to prompt or '@env:VAR' to read from an environment variable.",
+    )
+    add.add_argument(
+        "--fritz-pass-file",
+        help="File containing the Fritz!Box password (chmod 600).",
+    )
+    add.add_argument(
+        "--fritz-ca-file",
+        help="Custom CA bundle to trust when connecting to the Fritz!Box.",
+    )
+    add.add_argument(
+        "--allow-insecure-tls",
+        action="store_true",
+        help="Disable TLS verification for Fritz!Box connections (not recommended).",
+    )
     add.add_argument("--key-type", default="2048", help="Key type (2048, ec-256, etc.)")
 
     rem = sub.add_parser("remove-box", help="Remove a Fritz!Box entry")

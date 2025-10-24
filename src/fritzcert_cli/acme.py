@@ -9,10 +9,14 @@ acme.py – robust acme.sh integration
 
 from __future__ import annotations
 
+import hashlib
 import os
 import pathlib
 import shlex
 import subprocess
+import tarfile
+import tempfile
+import urllib.request
 from typing import Dict, Optional
 
 from .config import _load_yaml as _load_global_yaml
@@ -24,6 +28,10 @@ ACME_HOME = pathlib.Path.home() / ".acme.sh"
 ACME_BIN = ACME_HOME / "acme.sh"
 
 STATE_ROOT = pathlib.Path("/var/lib/fritzcert")
+
+ACME_VERSION = "3.0.6"
+ACME_ARCHIVE_URL = f"https://github.com/acmesh-official/acme.sh/archive/refs/tags/{ACME_VERSION}.tar.gz"
+ACME_ARCHIVE_SHA256 = "4a8e44c27e2a8f01a978e8d15add8e9908b83f9b1555670e49a9b769421f5fa6"
 
 
 class AcmeError(RuntimeError):
@@ -41,10 +49,94 @@ def _acme_home_for_current_user() -> tuple[pathlib.Path, pathlib.Path]:
     return acme_home, acme_home / "acme.sh"
 
 
+def _download_archive(dest: pathlib.Path) -> None:
+    """Download the pinned acme.sh archive and verify its SHA256 checksum."""
+    print(f"[acme.sh] Downloading {ACME_ARCHIVE_URL} ...")
+    hasher = hashlib.sha256()
+    try:
+        with urllib.request.urlopen(ACME_ARCHIVE_URL, timeout=60) as resp, open(dest, "wb") as fh:
+            while True:
+                chunk = resp.read(8192)
+                if not chunk:
+                    break
+                fh.write(chunk)
+                hasher.update(chunk)
+    except Exception as exc:
+        raise AcmeError(f"Failed to download acme.sh archive: {exc}") from exc
+
+    digest = hasher.hexdigest()
+    if digest != ACME_ARCHIVE_SHA256:
+        raise AcmeError(
+            "SHA256 mismatch downloading acme.sh archive. "
+            f"Expected {ACME_ARCHIVE_SHA256}, got {digest}."
+        )
+
+
+def _safe_extract_tar(archive_path: pathlib.Path, destination: pathlib.Path) -> pathlib.Path:
+    """Extract tar archive ensuring no path traversal, return extracted root directory."""
+    try:
+        with tarfile.open(archive_path, "r:gz") as tar:
+            dest_resolved = destination.resolve()
+            members = tar.getmembers()
+            for member in members:
+                member_path = dest_resolved / member.name
+                if not member_path.resolve().is_relative_to(dest_resolved):
+                    raise AcmeError(f"Unsafe path detected in archive: {member.name}")
+            tar.extractall(destination)
+    except AcmeError:
+        raise
+    except Exception as exc:
+        raise AcmeError(f"Failed to extract acme.sh archive: {exc}") from exc
+
+    candidates = [p for p in destination.iterdir() if p.is_dir() and p.name.startswith("acme.sh-")]
+    if not candidates:
+        raise AcmeError("Unexpected archive layout while installing acme.sh.")
+    return candidates[0]
+
+
+def _install_acme_sh(acme_home: pathlib.Path, acme_bin: pathlib.Path) -> None:
+    """Download, verify, and install acme.sh into acme_home."""
+    with tempfile.TemporaryDirectory(prefix="fritzcert_acme_") as tmp:
+        tmpdir = pathlib.Path(tmp)
+        archive_path = tmpdir / "acme.sh.tar.gz"
+        _download_archive(archive_path)
+        extract_root = tmpdir / "src"
+        extract_root.mkdir(parents=True, exist_ok=True)
+        source_dir = _safe_extract_tar(archive_path, extract_root)
+
+        installer = source_dir / "acme.sh"
+        if not installer.exists():
+            raise AcmeError("Installer script acme.sh not found in extracted archive.")
+
+        acme_home.mkdir(parents=True, exist_ok=True)
+
+        cmd = [
+            "bash",
+            str(installer),
+            "--install",
+            "--home",
+            str(acme_home),
+            "--nocron",
+            "--no-profile",
+            "--force",
+        ]
+        env = os.environ.copy()
+        env.setdefault("AUTOUPGRADE", "0")
+        print(f"[acme.sh] Installing into {acme_home} ...")
+        try:
+            subprocess.run(cmd, check=True, env=env, capture_output=True, text=True)
+        except subprocess.CalledProcessError as exc:
+            raise AcmeError(
+                f"acme.sh installation failed ({exc.returncode}): {exc.stderr}"
+            ) from exc
+
+    if not acme_bin.exists():
+        raise AcmeError(f"acme.sh install failed: {acme_bin} not found")
+
+
 def ensure_acme_installed() -> None:
     """
     Ensure acme.sh is present and executable for the current (effective) user.
-    Installs it into the chosen acme home if missing. Does not register account here.
     """
     global ACME_HOME, ACME_BIN
 
@@ -57,17 +149,8 @@ def ensure_acme_installed() -> None:
         except subprocess.CalledProcessError as exc:
             raise AcmeError(f"acme.sh found but not runnable: {exc.stderr}") from exc
 
-    print(f"[acme.sh] Installing into {ACME_HOME} ...")
-    # Install explicitly into the correct home; omit cron and let our systemd handle scheduling
-    install_cmd = f'curl -fsSL https://get.acme.sh | sh -s -- --home "{ACME_HOME}" --nocron'
-    subprocess.run(["bash", "-lc", install_cmd], check=True)
-
-    # Refresh paths and verify
-    ACME_HOME, ACME_BIN = _acme_home_for_current_user()
-    if not ACME_BIN.exists():
-        raise AcmeError(f"acme.sh install failed: {ACME_BIN} not found")
-
-    subprocess.run([str(ACME_BIN), "--version"], check=True)
+    _install_acme_sh(ACME_HOME, ACME_BIN)
+    subprocess.run([str(ACME_BIN), "--version"], check=True, capture_output=True, text=True)
 
 
 def ensure_account() -> None:

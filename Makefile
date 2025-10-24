@@ -31,17 +31,12 @@ help:
 
 dirs:
 	@sudo mkdir -p $(CONF_DIR) $(CONF_DIR)/backups $(STATE_DIR) $(LOG_DIR)
-	@sudo chmod 755 $(CONF_DIR) $(CONF_DIR)/backups $(STATE_DIR) $(LOG_DIR)
+	@sudo chmod 700 $(CONF_DIR) $(CONF_DIR)/backups $(STATE_DIR) $(LOG_DIR)
 	@echo "[OK] System directories are ready."
 
 install: dirs
 	@set -e; \
-	echo "[INFO] Ensuring acme.sh is installed (no cron) ..."; \
-	sudo bash -lc 'set -e; \
-	  if [ ! -x /root/.acme.sh/acme.sh ]; then \
-	    curl -fsSL https://get.acme.sh | sh -s -- --home "/root/.acme.sh" --nocron; \
-	  fi'; \
-	echo "[INFO] acme.sh present at /root/.acme.sh"; \
+	echo "[INFO] fritzcert will download and verify acme.sh automatically on first use."; \
 	echo "[INFO] Checking pipx..."; \
 	if ! command -v $(PIPX) >/dev/null 2>&1 && [ ! -x "$(PIPX_BIN)" ]; then \
 		echo "[INFO] Installing pipx (requires sudo)..."; \
