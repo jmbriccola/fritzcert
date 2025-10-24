@@ -15,6 +15,8 @@ _A command-line tool for issuing, deploying, and renewing SSL/TLS certificates v
 - Fully configurable through `/etc/fritzcert/config.yaml`.
 - Multi-device, multi-provider, multi-CA support.
 
+> **Note:** The original version of this project was generated entirely with AI assistance. Please audit and test before deploying in production environments.
+
 ---
 
 ## Features
@@ -492,6 +494,8 @@ Author: Jacopo Maria Briccola
 Pull requests are welcome. Please:
 1. Follow PEP8 style.
 2. Test on at least one FRITZ!Box model.
+
+> ⚠️ **AI-generated foundation:** The initial codebase was produced with AI assistance. Review, adapt, and test to ensure it meets your security and quality standards before deploying.
 
 ---
 
