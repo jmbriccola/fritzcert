@@ -124,7 +124,14 @@ def _install_acme_sh(acme_home: pathlib.Path, acme_bin: pathlib.Path) -> None:
         env.setdefault("AUTOUPGRADE", "0")
         print(f"[acme.sh] Installing into {acme_home} ...")
         try:
-            subprocess.run(cmd, check=True, env=env, capture_output=True, text=True)
+            subprocess.run(
+                cmd,
+                check=True,
+                env=env,
+                capture_output=True,
+                text=True,
+                cwd=str(source_dir),
+            )
         except subprocess.CalledProcessError as exc:
             raise AcmeError(
                 f"acme.sh installation failed ({exc.returncode}): {exc.stderr}"
